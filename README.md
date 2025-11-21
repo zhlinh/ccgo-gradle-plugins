@@ -10,32 +10,32 @@ This project provides a set of Gradle convention plugins that standardize build 
 
 ### Android Plugins
 
-- `ccgo.android.application` - Android application configuration
-- `ccgo.android.application.compose` - Android application with Compose UI
-- `ccgo.android.application.flavors` - Product flavors configuration
-- `ccgo.android.application.jacoco` - Code coverage with Jacoco
-- `ccgo.android.library` - Android library configuration
-- `ccgo.android.library.compose` - Android library with Compose
-- `ccgo.android.library.jacoco` - Library code coverage
-- `ccgo.android.feature` - Feature module configuration
-- `ccgo.android.hilt` - Hilt dependency injection
-- `ccgo.android.room` - Room database
-- `ccgo.android.lint` - Lint configuration
-- `ccgo.android.root` - Root project configuration
+- `com.mojeter.ccgo.gradle.android.application` - Android application configuration
+- `com.mojeter.ccgo.gradle.android.application.compose` - Android application with Compose UI
+- `com.mojeter.ccgo.gradle.android.application.flavors` - Product flavors configuration
+- `com.mojeter.ccgo.gradle.android.application.jacoco` - Code coverage with Jacoco
+- `com.mojeter.ccgo.gradle.android.library` - Android library configuration
+- `com.mojeter.ccgo.gradle.android.library.compose` - Android library with Compose
+- `com.mojeter.ccgo.gradle.android.library.jacoco` - Library code coverage
+- `com.mojeter.ccgo.gradle.android.feature` - Feature module configuration
+- `com.mojeter.ccgo.gradle.android.hilt` - Hilt dependency injection
+- `com.mojeter.ccgo.gradle.android.room` - Room database
+- `com.mojeter.ccgo.gradle.android.lint` - Lint configuration
+- `com.mojeter.ccgo.gradle.android.root` - Root project configuration
 
 ### Native Build Plugins
 
-- `ccgo.android.library.native.empty` - Empty native library (no C++ code)
-- `ccgo.android.library.native.python` - Python-based native build
-- `ccgo.android.library.native.cmake` - CMake-based native build
+- `com.mojeter.ccgo.gradle.android.library.native.empty` - Empty native library (no C++ code)
+- `com.mojeter.ccgo.gradle.android.library.native.python` - Python-based native build
+- `com.mojeter.ccgo.gradle.android.library.native.cmake` - CMake-based native build
 
 ### Publishing Plugin
 
-- `ccgo.android.publish` - Maven publishing configuration
+- `com.mojeter.ccgo.gradle.android.publish` - Maven publishing configuration
 
 ### JVM Plugin
 
-- `ccgo.jvm.library` - Pure JVM/Kotlin library
+- `com.mojeter.ccgo.gradle.jvm.library` - Pure JVM/Kotlin library
 
 ## Publishing
 
@@ -49,27 +49,29 @@ For local testing, publish to `~/.m2/repository/`:
 
 ### Publish to Maven Central
 
-For public releases, publish to Maven Central (Sonatype OSSRH):
+For public releases, this project uses [vanniktech/gradle-maven-publish-plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/) to publish to Maven Central Portal:
 
 1. Configure credentials in `~/.gradle/gradle.properties`:
 
 ```properties
-PUBLISH_TO_MAVEN_CENTRAL=true
-OSSRH_USERNAME=your-sonatype-username
-OSSRH_PASSWORD=your-sonatype-password
+# Maven Central credentials (get User Token from https://central.sonatype.com/account)
+mavenCentralUsername=your-user-token-username
+mavenCentralPassword=your-user-token-password
 
 # Optional: Use in-memory PGP key for signing
-SIGNING_KEY=-----BEGIN PGP PRIVATE KEY BLOCK-----\n...\n-----END PGP PRIVATE KEY BLOCK-----
-SIGNING_PASSWORD=your-key-password
+signingInMemoryKey=-----BEGIN PGP PRIVATE KEY BLOCK-----\n...\n-----END PGP PRIVATE KEY BLOCK-----
+signingInMemoryKeyPassword=your-key-password
 ```
+
+**Note**: Get User Token from https://central.sonatype.com/account (not your login credentials)
 
 2. Publish:
 
 ```bash
-./gradlew publishAllPublicationsToOSSRHRepository
+./gradlew publishAllPublicationsToMavenCentralRepository
 ```
 
-3. Log in to [Sonatype Nexus](https://s01.oss.sonatype.org/) to close and release the staging repository
+The plugin automatically handles signing, upload, and release to Maven Central.
 
 **For detailed instructions, see [PUBLISHING.md](PUBLISHING.md)**
 
@@ -127,9 +129,9 @@ In your project's `gradle/libs.versions.toml`:
 ccgo-buildlogic = "1.0.0"
 
 [plugins]
-ccgo-android-library = { id = "ccgo.android.library", version.ref = "ccgo-buildlogic" }
-ccgo-android-library-native-cmake = { id = "ccgo.android.library.native.cmake", version.ref = "ccgo-buildlogic" }
-ccgo-android-publish = { id = "ccgo.android.publish", version.ref = "ccgo-buildlogic" }
+ccgo-android-library = { id = "com.mojeter.ccgo.gradle.android.library", version.ref = "ccgo-buildlogic" }
+ccgo-android-library-native-cmake = { id = "com.mojeter.ccgo.gradle.android.library.native.cmake", version.ref = "ccgo-buildlogic" }
+ccgo-android-publish = { id = "com.mojeter.ccgo.gradle.android.publish", version.ref = "ccgo-buildlogic" }
 # ... other plugins
 ```
 
@@ -161,6 +163,12 @@ This project follows semantic versioning:
 - **x.0.0** - Major releases (breaking changes)
 
 Update `VERSION_NAME` in `gradle.properties` to release a new version.
+
+## Migration
+
+**Important**: Starting from version 0.0.1, the Maven group ID has been changed from `com.ccgo.gradle` to `com.mojeter.ccgo.gradle`.
+
+See [MIGRATION.md](MIGRATION.md) for detailed migration instructions.
 
 ## Development
 
