@@ -169,7 +169,7 @@ Releases are published to: https://repo1.maven.org/maven2/ (Maven Central)
 **Problem**: `401 Unauthorized` when publishing
 
 **Solution**:
-- Verify OSSRH credentials are correct
+- Verify Sonatype credentials are correct
 - Check if your account has access to `com.mojeter.ccgo.gradle` group ID
 - Wait for Sonatype approval if you just requested access
 

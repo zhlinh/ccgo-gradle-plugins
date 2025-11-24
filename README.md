@@ -1,5 +1,8 @@
 # CCGO Gradle Plugins
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Maven Central](https://img.shields.io/maven-central/v/com.mojeter.ccgo.gradle/convention)](https://central.sonatype.com/artifact/com.mojeter.ccgo.gradle/convention)
+
 Convention plugins for CCGO cross-platform C++ projects.
 
 ## Overview
