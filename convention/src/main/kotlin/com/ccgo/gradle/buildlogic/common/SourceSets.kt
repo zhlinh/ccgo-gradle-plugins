@@ -23,7 +23,7 @@ internal fun Project.configureSourceSets(commonExtension: CommonExtension<*, *, 
     commonExtension.apply {
         sourceSets {
             maybeCreate("main").apply {
-                jniLibs.srcDirs("libs")
+                jniLibs.srcDirs("libs/shared")
             }
         }
         // The resource prefix is derived from the module name,

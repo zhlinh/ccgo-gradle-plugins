@@ -168,11 +168,11 @@ private fun Project.configureCustomMaven() {
         publications {
             val publishConfig = mutableMapOf(
                 // main always use release
-                MAIN_PUBLICATION_NAME to "bin/${cfgs.getMainArchiveAarName("release")}",
+                MAIN_PUBLICATION_NAME to "target/${cfgs.getMainArchiveAarName("release")}",
             )
             if (!cfgs.isRelease) {
                 // if not release, add test publication
-                publishConfig[TEST_PUBLICATION_NAME] = "bin/${cfgs.mainProjectArchiveAarName}"
+                publishConfig[TEST_PUBLICATION_NAME] = "target/${cfgs.mainProjectArchiveAarName}"
             }
             (publications.getByName(MAVEN_PUBLICATION_NAME) as? MavenPublication)?.apply {
                 configurePublication(this, MAVEN_PUBLICATION_NAME,

@@ -31,7 +31,7 @@ internal fun Project.configureAndroidTest(commonExtension: CommonExtension<*, *,
             maybeCreate("androidTest").apply {
                 // there is no '=' here
                 manifest.srcFile("src/androidTest/AndroidManifest.xml")
-                jniLibs.srcDirs(listOf("libs") + getThirdPartyXCommLibs())
+                jniLibs.srcDirs(listOf("libs/shared") + getThirdPartyXCommLibs())
             }
         }
         defaultConfig {

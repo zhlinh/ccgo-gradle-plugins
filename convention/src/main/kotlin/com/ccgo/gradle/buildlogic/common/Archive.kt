@@ -35,16 +35,16 @@ internal fun Project.configureRootArchive() {
         }
     }
 
-    // Task to clean the bin directory
-    val cleanTheBinDir = tasks.register("cleanTheBinDir", Delete::class) {
+    // Task to clean the target directory
+    val cleanTheTargetDir = tasks.register("cleanTheTargetDir", Delete::class) {
         println("[${project.displayName}] configure rootProject clean...")
         doFirst {
             println("[${project.displayName}] execute rootProject clean...")
         }
-        delete("${rootDir.parentFile}/bin/")
+        delete("${rootDir.parentFile}/target/")
     }
 
-    // Task to copy the AAR file to the bin directory
+    // Task to copy the AAR file to the target directory
     val copyProjectAAR = tasks.register("copyProjectAAR", Copy::class) {
         val mainAndroidSdk = cfgs.mainCommProject
         val chosenProject = mainAndroidSdk.name
@@ -54,7 +54,7 @@ internal fun Project.configureRootArchive() {
             println("[${project.displayName}] execute rootProject [${cfgs.projectNameUppercase}] copyProjectAAR...")
             println("[${project.displayName}] get mainProjectName [${chosenProject}], path [${androidProjectPath}]...")
         }
-        copyAARFile(mainAndroidSdk, "${rootDir.parentFile}/bin/")
+        copyAARFile(mainAndroidSdk, "${rootDir.parentFile}/target/")
     }
 
     // Task to archive the project
@@ -78,13 +78,13 @@ internal fun Project.configureRootArchive() {
  */
 internal fun Project.configureSubArchive() {
     println("[${project.displayName}] execute subProject configureSubArchive...")
-    // Task to clean the bin directory
-    val cleanTheBinDir = tasks.register("cleanTheBinDir", Delete::class) {
+    // Task to clean the target directory
+    val cleanTheTargetDir = tasks.register("cleanTheTargetDir", Delete::class) {
         println("[${project.displayName}] configure project clean...")
         doFirst {
             println("[${project.displayName}] execute project clean...")
         }
-        delete("${project.projectDir}/bin/")
+        delete("${project.projectDir}/target/")
     }
 
     // Task to generate the AAR file
@@ -95,13 +95,13 @@ internal fun Project.configureSubArchive() {
         }
     }
 
-    // Task to copy the AAR file to the bin directory
+    // Task to copy the AAR file to the target directory
     val copyProjectAAR = tasks.register("copyProjectAAR", Copy::class) {
         println("[${project.displayName}] configure subProject copyProjectAAR...")
         doFirst {
             println("[${project.displayName}] execute subProject copyProjectAAR...")
         }
-        copyAARFile(project, "${project.projectDir}/bin/")
+        copyAARFile(project, "${project.projectDir}/target/")
     }
 
     project.afterEvaluate {
@@ -121,9 +121,9 @@ internal fun Project.configureSubArchive() {
         // can not use named, or dependsOn will occur error
         val assembleProdRelease = tasks.named(cfgs.mainProjectAssembleProdTaskName)
         genAAR.dependsOn(assembleProdRelease)
-        assembleProdRelease.dependsOn(cleanTheBinDir)
-        val rootCleanTheBinDir = rootProject.tasks.named("cleanTheBinDir")
-        cleanTheBinDir.dependsOn(rootCleanTheBinDir)
+        assembleProdRelease.dependsOn(cleanTheTargetDir)
+        val rootCleanTheBinDir = rootProject.tasks.named("cleanTheTargetDir")
+        cleanTheTargetDir.dependsOn(rootCleanTheBinDir)
     }
 }
 
@@ -150,7 +150,7 @@ fun Copy.copyAARFile(project: Project, destDir: String) {
 
 // Zip the files
 fun Zip.zipFiles(project: Project) {
-    from ("${project.rootDir.parentFile}/bin") {
+    from ("${project.rootDir.parentFile}/target") {
         include("java/**")
         include("libs/**")
         include("obj/**")
@@ -159,13 +159,13 @@ fun Zip.zipFiles(project: Project) {
     // remove .zip suffix
     into(project.cfgs.mainProjectArchiveZipName.substringBeforeLast("."))
     archiveFileName.set(project.cfgs.mainProjectArchiveZipName)
-    destinationDirectory.set(File("${project.rootDir.parentFile}/bin/"))
+    destinationDirectory.set(File("${project.rootDir.parentFile}/target/"))
     doLast {
-        project.delete("${project.rootDir.parentFile}/bin/java/")
-        project.delete("${project.rootDir.parentFile}/bin/libs/")
-        project.delete("${project.rootDir.parentFile}/bin/obj/")
+        project.delete("${project.rootDir.parentFile}/target/java/")
+        project.delete("${project.rootDir.parentFile}/target/libs/")
+        project.delete("${project.rootDir.parentFile}/target/obj/")
         println("===================${project.cfgs.projectNameUppercase} output===================")
-        val result = execCommand("ls ${project.rootDir.parentFile}/bin/")
+        val result = execCommand("ls ${project.rootDir.parentFile}/target/")
         println(result.trim())
     }
 }

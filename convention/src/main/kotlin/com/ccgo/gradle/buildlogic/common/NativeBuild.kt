@@ -48,14 +48,14 @@ internal fun Project.configureSubNativeBuildPython() {
 
     project.afterEvaluate {
         // taskProvider get from named function needs to include com.android.build.gradle.internal.tasks.factory.dependsOn
-        // cleanTheBinDir -> buildLibrariesForMain
+        // cleanTheTargetDir -> buildLibrariesForMain
         // -> mergeProdReleaseJniLibFolders -> assembleProdRelease
         val buildLibrariesForMain = tasks.named("buildLibrariesForMain")
         // buildLibrariesForMain will generate the libs dir including libs
         // for mergeProdReleaseJniLibFolders
         val mergeProdReleaseJniLibFolders = tasks.named(cfgs.mainProjectMergeProdJniTaskName)
-        val cleanTheBinDir = tasks.named("cleanTheBinDir")
-        buildLibrariesForMain.dependsOn(cleanTheBinDir)
+        val cleanTheTargetDir = tasks.named("cleanTheTargetDir")
+        buildLibrariesForMain.dependsOn(cleanTheTargetDir)
 
         mergeProdReleaseJniLibFolders.dependsOn(buildLibrariesForMain)
         mergeProdReleaseJniLibFolders.get().mustRunAfter(buildLibrariesForMain.get())

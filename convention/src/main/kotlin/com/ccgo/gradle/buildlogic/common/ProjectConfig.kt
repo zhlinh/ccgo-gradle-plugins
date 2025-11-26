@@ -63,7 +63,7 @@ class ProjectConfig(val project: Project) {
     val timeInfo: String by lazy { getGitHeadTimeInfo() }
     val publishSuffix: String by lazy { getPublishSuffix(isRelease) }
     val currentTag: String = getCurrentTag(isRelease, versionName, publishSuffix)
-    val projectName: String = project.rootProject.projectDir.name.split("/").last().uppercase()
+    val projectName: String = project.rootProject.name
     val projectNameUppercase: String = projectName.uppercase()
     val projectNameLowercase: String = projectName.lowercase()
     val mainProjectArchiveAarName = getMainArchiveAarName(publishSuffix)

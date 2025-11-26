@@ -26,7 +26,7 @@ internal fun Project.configureTag() {
                 file.mkdirs()
             }
             val currentTag = cfgs.currentTag
-            File("${rootDir.parentFile}/bin/${currentTag}").bufferedWriter().use { writer ->
+            File("${rootDir.parentFile}/target/${currentTag}").bufferedWriter().use { writer ->
                 writer.write(
                     "${currentTag} info：\n" +
                             "-----------------------------\n\n" +
@@ -42,7 +42,7 @@ internal fun Project.configureTag() {
             if (currentTag.contains("dirty")) {
                 return@doLast
             }
-            execCommand("git tag -a ${currentTag} -F ${rootDir.parentFile}/bin/${currentTag}")
+            execCommand("git tag -a ${currentTag} -F ${rootDir.parentFile}/target/${currentTag}")
             val head = execCommand("git show ${currentTag} | head")
             println(head)
             println("********${cfgs.projectNameUppercase} build start push tag *******")
