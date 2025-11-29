@@ -57,9 +57,10 @@ Or use the provided helper script:
 
 Configuration is read from multiple sources with the following priority (highest to lowest):
 
-1. **Environment variables**
-2. **gradle.properties** (project level or `~/.gradle/gradle.properties`)
-3. **CCGO.toml** (for projects using CCGO template)
+1. **Environment variables** (for CI/CD override)
+2. **CCGO.toml** (for projects using CCGO template)
+3. **Project-level gradle.properties** (in project root)
+4. **User-level ~/.gradle/gradle.properties** (personal defaults)
 
 ### Configuration Options
 

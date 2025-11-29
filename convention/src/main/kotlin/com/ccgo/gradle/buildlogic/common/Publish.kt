@@ -57,9 +57,10 @@ private const val MAVEN_PUBLICATION_NAME = "maven"
  * - ./gradlew publishToMavenCustom   # Publish to custom Maven repository
  *
  * Configuration sources (priority from high to low):
- * 1. Environment variables
- * 2. gradle.properties (project level or user level ~/.gradle/gradle.properties)
- * 3. CCGO.toml (project root)
+ * 1. Environment variables (for CI/CD override)
+ * 2. CCGO.toml (project root)
+ * 3. Project-level gradle.properties
+ * 4. User-level ~/.gradle/gradle.properties
  *
  * Supported environment variables and gradle.properties keys:
  * - MAVEN_CENTRAL_USERNAME / mavenCentralUsername

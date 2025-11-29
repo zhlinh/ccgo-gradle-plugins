@@ -15,7 +15,11 @@ import org.gradle.api.Project
 
 /**
  * Configuration keys for publish settings.
- * Priority: Environment Variable > gradle.properties > CCGO.toml
+ * Priority (from high to low):
+ * 1. Environment Variable (for CI/CD override)
+ * 2. CCGO.toml (project root)
+ * 3. Project-level gradle.properties
+ * 4. User-level ~/.gradle/gradle.properties
  */
 enum class ConfigKey(
     val envKey: String,
@@ -54,34 +58,59 @@ data class CustomMavenRepo(
 
 /**
  * Configuration provider that reads settings from multiple sources.
- * Priority: Environment Variable > gradle.properties > CCGO.toml
+ * Priority (from high to low):
+ * 1. Environment Variable (for CI/CD override)
+ * 2. CCGO.toml (project root)
+ * 3. Project-level gradle.properties
+ * 4. User-level ~/.gradle/gradle.properties
  */
 object ConfigProvider {
 
     /**
      * Get a single configuration value by key.
-     * Priority: Environment Variable > gradle.properties > CCGO.toml
+     * Priority (from high to low):
+     * 1. Environment Variable (for CI/CD override)
+     * 2. CCGO.toml (project root)
+     * 3. Project-level gradle.properties
+     * 4. User-level ~/.gradle/gradle.properties
      */
     fun get(project: Project, key: ConfigKey, defaultValue: String = ""): String {
-        // 1. Try environment variable
+        // 1. Try environment variable (highest priority, for CI/CD override)
         val envValue = System.getenv(key.envKey)
         if (!envValue.isNullOrBlank()) {
             println("[ConfigProvider] ${key.name} from ENV: ${key.envKey}")
             return envValue
         }
 
-        // 2. Try gradle.properties (project level and user level ~/.gradle/gradle.properties)
-        val gradleValue = project.findProperty(key.gradleKey)?.toString()
-        if (!gradleValue.isNullOrBlank()) {
-            println("[ConfigProvider] ${key.name} from gradle.properties: ${key.gradleKey}")
-            return gradleValue
-        }
-
-        // 3. Try CCGO.toml
+        // 2. Try CCGO.toml (project root)
         val tomlValue = TomlConfigReader.getValue(project, key.tomlPath)
         if (!tomlValue.isNullOrBlank()) {
             println("[ConfigProvider] ${key.name} from CCGO.toml: ${key.tomlPath}")
             return tomlValue
+        }
+
+        // 3. Try project-level gradle.properties
+        val projectPropsFile = project.rootProject.file("gradle.properties")
+        if (projectPropsFile.exists()) {
+            val projectProps = java.util.Properties()
+            projectPropsFile.inputStream().use { projectProps.load(it) }
+            val projectValue = projectProps.getProperty(key.gradleKey)
+            if (!projectValue.isNullOrBlank()) {
+                println("[ConfigProvider] ${key.name} from project gradle.properties: ${key.gradleKey}")
+                return projectValue
+            }
+        }
+
+        // 4. Try user-level ~/.gradle/gradle.properties (lowest priority)
+        val userGradlePropsFile = java.io.File(System.getProperty("user.home"), ".gradle/gradle.properties")
+        if (userGradlePropsFile.exists()) {
+            val userProps = java.util.Properties()
+            userGradlePropsFile.inputStream().use { userProps.load(it) }
+            val userValue = userProps.getProperty(key.gradleKey)
+            if (!userValue.isNullOrBlank()) {
+                println("[ConfigProvider] ${key.name} from user gradle.properties: ${key.gradleKey}")
+                return userValue
+            }
         }
 
         if (defaultValue.isNotEmpty()) {
