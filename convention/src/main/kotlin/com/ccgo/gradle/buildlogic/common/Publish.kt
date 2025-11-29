@@ -19,7 +19,6 @@ import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUserName
 import com.ccgo.gradle.buildlogic.common.utils.getGpgKeyFromKeyId
 import com.ccgo.gradle.buildlogic.common.utils.getGpgKeyFromKeyRingFile
 import com.ccgo.gradle.buildlogic.common.utils.getLocalProperties
-import com.vanniktech.maven.publish.SonatypeHost
 import org.gradle.api.Project
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPom
@@ -46,7 +45,7 @@ private const val REPO_NAME_CUSTOM = "MavenCustom"
 private const val RELEASE_PUBLICATION_NAME = "release"
 // Test:    ./gradlew publishTestPublicationToMavenLocalRepository --no-daemon
 private const val TEST_PUBLICATION_NAME = "test"
-// Maven Central (vanniktech): ./gradlew publishAllPublicationsToMavenCentralRepository --no-daemon
+// Maven Central (nmcp): ./gradlew publishAllPublicationsToCentralPortal --no-daemon
 private const val MAVEN_PUBLICATION_NAME = "maven"
 
 /**
@@ -184,7 +183,7 @@ private fun Project.configureSign() {
  * Configures the maven publishing for the project.
  *
  * Supports three types of Maven repositories:
- * 1. Maven Central - via vanniktech plugin
+ * 1. Maven Central - via nmcp plugin (GradleUp/nmcp)
  * 2. Local Maven - local directory path
  * 3. Custom Maven - custom URL with optional credentials
  */
@@ -196,22 +195,19 @@ private fun Project.configureMaven() {
 }
 
 private fun Project.configureCentralMaven() {
-    configureVanniktechCentralMaven()
-}
+    // nmcp plugin configuration is done in the project's build.gradle.kts
+    // since it uses the aggregation plugin pattern.
+    // This function now just sets up the publication with POM information.
 
-private fun Project.configureVanniktechCentralMaven() {
-    // https://github.com/vanniktech/gradle-maven-publish-plugin
-    extensions.configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
-        coordinates(
-            groupId = cfgs.commGroupId,
-            artifactId = getProjectArtifactId(),
-            version = cfgs.versionName
-        )
-        publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
-        if (cfgs.commIsSignEnabled) {
-            // sign after call publish
-            signAllPublications()
-        }
+    // Get credentials for logging purposes
+    val username = ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_USERNAME)
+    val hasCredentials = username.isNotEmpty()
+
+    if (hasCredentials) {
+        println("[Publish] Maven Central credentials configured")
+    } else {
+        println("[Publish] WARNING: Maven Central credentials not found")
+        println("[Publish] Set MAVEN_CENTRAL_USERNAME and MAVEN_CENTRAL_PASSWORD environment variables")
     }
 }
 
@@ -258,7 +254,7 @@ private fun Project.configureCustomMaven() {
             // Command: ./gradlew publishToMavenCustom (publishes to all custom repos)
             val customRepos = ConfigProvider.getCustomMavenRepos(project)
             customRepos.forEach { repo ->
-                // Skip Maven Central URLs (handled by vanniktech plugin)
+                // Skip Maven Central URLs (handled by plugin)
                 if (repo.url.contains(DEFAULT_CENTRAL_DOMAIN)) {
                     println("[Publish] Skipping Maven Central URL in custom repos: ${repo.url}")
                     return@forEach
@@ -325,6 +321,7 @@ private fun Project.configureCustomMaven() {
 
 /**
  * Registers convenient task aliases and adds success messages to publish tasks.
+ * Uses gradle.buildFinished to ensure success message only prints when build succeeds.
  * - publishToMavenLocal -> publishAllPublicationsToMavenLocalRepository
  * - publishToMavenCustom -> publishes to ALL custom Maven repositories
  * - publishToMavenCentral -> publishAllPublicationsToMavenCentralRepository
@@ -349,17 +346,6 @@ private fun Project.registerPublishTaskAliases() {
         }
         val artifactPath = "$expandedLocalPath/${groupId.replace('.', '/')}/$artifactId/$versionName"
 
-        // Add doLast to publishAllPublicationsToMavenLocalRepository task
-        tasks.findByName("publishAllPublicationsTo${REPO_NAME_LOCAL}Repository")?.doLast {
-            println("")
-            println("=".repeat(80))
-            println("[Publish] SUCCESS: Published to Maven Local")
-            println("[Publish] Repository: $expandedLocalPath")
-            println("[Publish] Artifact path: $artifactPath")
-            println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-            println("=".repeat(80))
-        }
-
         // Register alias task for Maven Local (if not exists)
         val localTask = tasks.findByName("publishAllPublicationsTo${REPO_NAME_LOCAL}Repository")
         if (localTask != null && tasks.findByName("publishTo${REPO_NAME_LOCAL}") == null) {
@@ -367,40 +353,17 @@ private fun Project.registerPublishTaskAliases() {
                 group = "publishing"
                 description = "Publishes all publications to the local Maven repository"
                 dependsOn(localTask)
-                doLast {
-                    println("")
-                    println("=".repeat(80))
-                    println("[Publish] SUCCESS: Published to Maven Local")
-                    println("[Publish] Repository: $expandedLocalPath")
-                    println("[Publish] Artifact path: $artifactPath")
-                    println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-                    println("=".repeat(80))
-                }
             }
         }
 
-        // Add doLast to publishAllPublicationsToMavenCentralRepository task
-        tasks.findByName("publishAllPublicationsToMavenCentralRepository")?.doLast {
-            println("")
-            println("=".repeat(80))
-            println("[Publish] SUCCESS: Published to Maven Central")
-            println("[Publish] URL: https://central.sonatype.com")
-            println("[Publish] Search: https://central.sonatype.com/search?q=$groupId:$artifactId")
-            println("[Publish] Artifact: https://central.sonatype.com/artifact/$groupId/$artifactId/$versionName")
-            println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-            println("=".repeat(80))
-        }
-
-        // Add doLast to existing publishToMavenCentral task (from vanniktech plugin)
-        tasks.findByName("publishToMavenCentral")?.doLast {
-            println("")
-            println("=".repeat(80))
-            println("[Publish] SUCCESS: Published to Maven Central")
-            println("[Publish] URL: https://central.sonatype.com")
-            println("[Publish] Search: https://central.sonatype.com/search?q=$groupId:$artifactId")
-            println("[Publish] Artifact: https://central.sonatype.com/artifact/$groupId/$artifactId/$versionName")
-            println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-            println("=".repeat(80))
+        // Alias for Maven Central (nmcp uses publishAggregationToCentralPortal)
+        val centralPortalTask = tasks.findByName("publishAggregationToCentralPortal")
+        if (centralPortalTask != null && tasks.findByName("publishToMavenCentral") == null) {
+            tasks.register("publishToMavenCentral") {
+                group = "publishing"
+                description = "Publishes all publications to Maven Central via Central Portal"
+                dependsOn(centralPortalTask)
+            }
         }
 
         // Alias for Maven Custom - publishes to ALL custom repositories
@@ -413,21 +376,76 @@ private fun Project.registerPublishTaskAliases() {
             }
         }
         if (customTasks.isNotEmpty() && tasks.findByName("publishTo${REPO_NAME_CUSTOM}") == null) {
-            val customRepos = ConfigProvider.getCustomMavenRepos(project)
             tasks.register("publishTo${REPO_NAME_CUSTOM}") {
                 group = "publishing"
                 description = "Publishes all publications to all custom Maven repositories"
                 dependsOn(customTasks)
-                doLast {
-                    println("")
-                    println("=".repeat(80))
-                    println("[Publish] SUCCESS: Published to Maven Custom repositories")
-                    customRepos.forEach { repo ->
-                        println("[Publish] Repository ${repo.index}: ${repo.url}")
+            }
+        }
+
+        // Get custom repos for success message
+        val customRepos = ConfigProvider.getCustomMavenRepos(project)
+
+        // Track which publish tasks completed successfully
+        var localTaskSuccess = false
+        var centralTaskSuccess = false
+        var customTaskSuccess = false
+
+        // Use taskGraph.afterTask to track successful task completion
+        gradle.taskGraph.afterTask {
+            if (state.failure == null) {
+                when (name) {
+                    "publishTo${REPO_NAME_LOCAL}", "publishAllPublicationsTo${REPO_NAME_LOCAL}Repository" -> {
+                        localTaskSuccess = true
                     }
-                    println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-                    println("=".repeat(80))
+                    // nmcp task: publishAggregationToCentralPortal
+                    "publishToMavenCentral", "publishAggregationToCentralPortal" -> {
+                        centralTaskSuccess = true
+                    }
+                    "publishTo${REPO_NAME_CUSTOM}" -> {
+                        customTaskSuccess = true
+                    }
                 }
+            }
+        }
+
+        // Use gradle.buildFinished to print success message only when build succeeds
+        gradle.buildFinished {
+            if (failure != null) {
+                // Build failed, don't print success message
+                return@buildFinished
+            }
+
+            if (localTaskSuccess) {
+                println("")
+                println("=".repeat(80))
+                println("[Publish] SUCCESS: Published to Maven Local")
+                println("[Publish] Repository: $expandedLocalPath")
+                println("[Publish] Artifact path: $artifactPath")
+                println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+                println("=".repeat(80))
+            }
+
+            if (centralTaskSuccess) {
+                println("")
+                println("=".repeat(80))
+                println("[Publish] SUCCESS: Published to Maven Central")
+                println("[Publish] URL: https://central.sonatype.com")
+                println("[Publish] Search: https://central.sonatype.com/search?q=$groupId:$artifactId")
+                println("[Publish] Artifact: https://central.sonatype.com/artifact/$groupId/$artifactId/$versionName")
+                println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+                println("=".repeat(80))
+            }
+
+            if (customTaskSuccess) {
+                println("")
+                println("=".repeat(80))
+                println("[Publish] SUCCESS: Published to Maven Custom repositories")
+                customRepos.forEach { repo ->
+                    println("[Publish] Repository ${repo.index}: ${repo.url}")
+                }
+                println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+                println("=".repeat(80))
             }
         }
     }
@@ -622,27 +640,12 @@ private fun Project.configureSourcesAndJavaDoc() {
 }
 
 /**
- * Sets up system environment for vanniktech plugin.
- * Uses ConfigProvider to get credentials from env/gradle.properties/CCGO.toml.
+ * Sets up system environment for signing.
+ * Note: nmcp plugin uses System.getenv() directly, so no conversion needed for credentials.
  */
 private fun Project.setSystemEnv() {
-    val envMap = mapOf(
-        "ORG_GRADLE_PROJECT_mavenCentralUsername" to ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_USERNAME),
-        "ORG_GRADLE_PROJECT_mavenCentralPassword" to ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_PASSWORD),
-        "ORG_GRADLE_PROJECT_signingInMemoryKey" to getSigningInMemoryKey(),
-        "ORG_GRADLE_PROJECT_signingInMemoryKeyId" to getLocalProperties("signing.keyId", ""),
-        "ORG_GRADLE_PROJECT_signingInMemoryKeyPassword" to ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
-    )
-    // detail in https://vanniktech.github.io/gradle-maven-publish-plugin/central/#configuring-the-pom
-    tasks.withType(Exec::class.java).configureEach {
-        // set env
-        environment(envMap)
-        envMap.forEach { (key, value) ->
-            if (value.isNotEmpty()) {
-                System.setProperty(key, value)
-            }
-        }
-    }
+    // nmcp plugin reads credentials directly via System.getenv() in configureNmcpCentralMaven()
+    // No environment variable conversion needed anymore
 }
 
 private fun Project.getProjectArtifactId(): String {

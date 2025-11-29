@@ -6,7 +6,7 @@ kotlin = "1.9.22"
 ksp = "1.9.22-1.0.18"
 room = "2.6.1"
 truth = "1.4.2"
-mavenPublishPlugin = "0.30.0"
+nmcpPlugin = "1.2.0"
 tomlj = "1.1.1"
 
 [libraries]
@@ -15,7 +15,7 @@ android-tools-common = { group = "com.android.tools", name = "common", version.r
 kotlin-gradlePlugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
 ksp-gradlePlugin = { group = "com.google.devtools.ksp", name = "com.google.devtools.ksp.gradle.plugin", version.ref = "ksp" }
 room-gradlePlugin = { group = "androidx.room", name = "room-gradle-plugin", version.ref = "room" }
-maven-publishPlugin = { group = "com.vanniktech", name = "gradle-maven-publish-plugin", version.ref = "mavenPublishPlugin" }
+nmcp-gradlePlugin = { group = "com.gradleup.nmcp", name = "nmcp", version.ref = "nmcpPlugin" }
 truth = { group = "com.google.truth", name = "truth", version.ref = "truth" }
 tomlj = { group = "org.tomlj", name = "tomlj", version.ref = "tomlj" }
 
