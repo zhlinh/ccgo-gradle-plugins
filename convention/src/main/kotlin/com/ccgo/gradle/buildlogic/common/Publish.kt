@@ -84,23 +84,98 @@ internal fun Project.configurePublish() {
 }
 
 /**
+ * Prepares and validates a PGP key for signing.
+ * Converts escaped newlines to actual newlines and validates the key format.
+ *
+ * @param key The raw PGP key string
+ * @return The prepared key if valid, null otherwise
+ */
+private fun preparePgpKey(key: String): String? {
+    var cleanKey = key.trim().removeSurrounding("\"").removeSurrounding("'")
+
+    // Check if the key contains literal \n (escaped newlines) and convert them to actual newlines
+    if (cleanKey.contains("\\n")) {
+        cleanKey = cleanKey.replace("\\n", "\n")
+    }
+
+    // Validate key format
+    if (!cleanKey.startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
+        println("[Signing] ERROR: Key does not start with '-----BEGIN PGP PRIVATE KEY BLOCK-----'")
+        println("[Signing] Key preview: ${cleanKey.take(60)}...")
+        return null
+    }
+
+    if (!cleanKey.contains("-----END PGP PRIVATE KEY BLOCK-----")) {
+        println("[Signing] ERROR: Key does not contain '-----END PGP PRIVATE KEY BLOCK-----'")
+        return null
+    }
+
+    // Check if key has proper line breaks (should have multiple lines)
+    val lineCount = cleanKey.lines().size
+    if (lineCount < 5) {
+        println("[Signing] ERROR: Key appears to be malformed (only $lineCount lines, expected multiple lines)")
+        println("[Signing] Hint: If your key is stored with escaped newlines (\\n), they should be converted to actual line breaks")
+        return null
+    }
+
+    return cleanKey
+}
+
+/**
  * Configures the signing for the project.
  */
 private fun Project.configureSign() {
+    var signingConfigured = false
+
     extensions.configure<SigningExtension> {
+        isRequired = false
+
         sign {
             val publishing = project.extensions.getByName("publishing") as PublishingExtension
-            val signingKey = getSigningInMemoryKey()
-            if (signingKey.isEmpty()) {
-                println("sign signingKey is empty, skip sign publication")
+            val rawSigningKey = getSigningInMemoryKey()
+            if (rawSigningKey.isEmpty()) {
+                println("[Signing] WARNING: Signing key is empty, skip sign publication")
                 return@sign
             }
-            val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
-            useInMemoryPgpKeys(signingKey, signingPassword)
-            publishing.publications.asMap.filter { it.key == RELEASE_PUBLICATION_NAME }.forEach { (_, publication) ->
-                println("sign publication: ${publication.name}")
-                sign(publication as MavenPublication)
+
+            println("[Signing] Configuring with in-memory PGP key (raw length: ${rawSigningKey.length})")
+            val preparedKey = preparePgpKey(rawSigningKey)
+
+            if (preparedKey != null) {
+                try {
+                    val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
+                    useInMemoryPgpKeys(preparedKey, signingPassword)
+                    println("[Signing] In-memory PGP key configured successfully (${preparedKey.lines().size} lines)")
+                    signingConfigured = true
+
+                    publishing.publications.asMap.filter { it.key == RELEASE_PUBLICATION_NAME }.forEach { (_, publication) ->
+                        println("[Signing] Signing publication: ${publication.name}")
+                        sign(publication as MavenPublication)
+                    }
+                } catch (e: Exception) {
+                    println("[Signing] ERROR: Failed to configure PGP key: ${e.message}")
+                    println("[Signing] Please verify your signing key and password are correct")
+                    signingConfigured = false
+                }
+            } else {
+                println("[Signing] ERROR: Signing key validation failed. Signing will be disabled.")
+                println("[Signing] To fix this, ensure your signingInMemoryKey:")
+                println("[Signing]   1. Starts with '-----BEGIN PGP PRIVATE KEY BLOCK-----'")
+                println("[Signing]   2. Ends with '-----END PGP PRIVATE KEY BLOCK-----'")
+                println("[Signing]   3. Contains the full key content with proper line breaks")
+                println("[Signing]   4. If using environment variable, ensure newlines are preserved")
+                signingConfigured = false
             }
+        }
+    }
+
+    // Disable signing tasks if signing was not successfully configured
+    gradle.taskGraph.whenReady {
+        if (!signingConfigured) {
+            allTasks.filter { it.name.startsWith("sign") }.forEach {
+                it.enabled = false
+            }
+            println("[Publish] Signing tasks disabled (signing not properly configured)")
         }
     }
 }
@@ -159,18 +234,25 @@ private fun Project.configureCustomMaven() {
         repositories {
             var validRepoCount = 0
 
-            // 1. Configure local Maven repository
+            // 1. Configure local Maven repository (use default ~/.m2/repository if not configured)
             // Command: ./gradlew publishToMavenLocal
-            val localPath = ConfigProvider.getLocalMavenPath(project)
-            if (!localPath.isNullOrBlank()) {
-                maven {
-                    name = REPO_NAME_LOCAL
-                    url = uri(localPath)
-                    println("[Publish] Added Local Maven repository: $localPath")
-                    println("[Publish] Command: ./gradlew publishTo${REPO_NAME_LOCAL}")
+            val configuredPath = ConfigProvider.getLocalMavenPath(project)
+            val localPath = if (!configuredPath.isNullOrBlank()) {
+                if (configuredPath.startsWith("~")) {
+                    configuredPath.replaceFirst("~", System.getProperty("user.home"))
+                } else {
+                    configuredPath
                 }
-                validRepoCount++
+            } else {
+                "${System.getProperty("user.home")}/.m2/repository"
             }
+            maven {
+                name = REPO_NAME_LOCAL
+                url = uri(localPath)
+                println("[Publish] Added Local Maven repository: $localPath")
+                println("[Publish] Command: ./gradlew publishTo${REPO_NAME_LOCAL}")
+            }
+            validRepoCount++
 
             // 2. Configure custom Maven repositories (comma-separated)
             // Command: ./gradlew publishToMavenCustom (publishes to all custom repos)
@@ -242,21 +324,83 @@ private fun Project.configureCustomMaven() {
 }
 
 /**
- * Registers convenient task aliases for easier command usage.
+ * Registers convenient task aliases and adds success messages to publish tasks.
  * - publishToMavenLocal -> publishAllPublicationsToMavenLocalRepository
  * - publishToMavenCustom -> publishes to ALL custom Maven repositories
  * - publishToMavenCentral -> publishAllPublicationsToMavenCentralRepository
  */
 private fun Project.registerPublishTaskAliases() {
     afterEvaluate {
-        // Alias for Maven Local
+        // Get artifact info for success message
+        val groupId = cfgs.commGroupId
+        val artifactId = getProjectArtifactId()
+        val versionName = cfgs.versionName
+
+        // Calculate local path
+        val configuredPath = ConfigProvider.getLocalMavenPath(project)
+        val expandedLocalPath = if (!configuredPath.isNullOrBlank()) {
+            if (configuredPath.startsWith("~")) {
+                configuredPath.replaceFirst("~", System.getProperty("user.home"))
+            } else {
+                configuredPath
+            }
+        } else {
+            "${System.getProperty("user.home")}/.m2/repository"
+        }
+        val artifactPath = "$expandedLocalPath/${groupId.replace('.', '/')}/$artifactId/$versionName"
+
+        // Add doLast to publishAllPublicationsToMavenLocalRepository task
+        tasks.findByName("publishAllPublicationsTo${REPO_NAME_LOCAL}Repository")?.doLast {
+            println("")
+            println("=".repeat(80))
+            println("[Publish] SUCCESS: Published to Maven Local")
+            println("[Publish] Repository: $expandedLocalPath")
+            println("[Publish] Artifact path: $artifactPath")
+            println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+            println("=".repeat(80))
+        }
+
+        // Register alias task for Maven Local (if not exists)
         val localTask = tasks.findByName("publishAllPublicationsTo${REPO_NAME_LOCAL}Repository")
-        if (localTask != null) {
+        if (localTask != null && tasks.findByName("publishTo${REPO_NAME_LOCAL}") == null) {
             tasks.register("publishTo${REPO_NAME_LOCAL}") {
                 group = "publishing"
                 description = "Publishes all publications to the local Maven repository"
                 dependsOn(localTask)
+                doLast {
+                    println("")
+                    println("=".repeat(80))
+                    println("[Publish] SUCCESS: Published to Maven Local")
+                    println("[Publish] Repository: $expandedLocalPath")
+                    println("[Publish] Artifact path: $artifactPath")
+                    println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+                    println("=".repeat(80))
+                }
             }
+        }
+
+        // Add doLast to publishAllPublicationsToMavenCentralRepository task
+        tasks.findByName("publishAllPublicationsToMavenCentralRepository")?.doLast {
+            println("")
+            println("=".repeat(80))
+            println("[Publish] SUCCESS: Published to Maven Central")
+            println("[Publish] URL: https://central.sonatype.com")
+            println("[Publish] Search: https://central.sonatype.com/search?q=$groupId:$artifactId")
+            println("[Publish] Artifact: https://central.sonatype.com/artifact/$groupId/$artifactId/$versionName")
+            println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+            println("=".repeat(80))
+        }
+
+        // Add doLast to existing publishToMavenCentral task (from vanniktech plugin)
+        tasks.findByName("publishToMavenCentral")?.doLast {
+            println("")
+            println("=".repeat(80))
+            println("[Publish] SUCCESS: Published to Maven Central")
+            println("[Publish] URL: https://central.sonatype.com")
+            println("[Publish] Search: https://central.sonatype.com/search?q=$groupId:$artifactId")
+            println("[Publish] Artifact: https://central.sonatype.com/artifact/$groupId/$artifactId/$versionName")
+            println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+            println("=".repeat(80))
         }
 
         // Alias for Maven Custom - publishes to ALL custom repositories
@@ -268,21 +412,22 @@ private fun Project.registerPublishTaskAliases() {
                 customTasks.add(task)
             }
         }
-        if (customTasks.isNotEmpty()) {
+        if (customTasks.isNotEmpty() && tasks.findByName("publishTo${REPO_NAME_CUSTOM}") == null) {
+            val customRepos = ConfigProvider.getCustomMavenRepos(project)
             tasks.register("publishTo${REPO_NAME_CUSTOM}") {
                 group = "publishing"
                 description = "Publishes all publications to all custom Maven repositories"
                 dependsOn(customTasks)
-            }
-        }
-
-        // Alias for Maven Central
-        val centralTask = tasks.findByName("publishAllPublicationsToMavenCentralRepository")
-        if (centralTask != null) {
-            tasks.register("publishToMavenCentral") {
-                group = "publishing"
-                description = "Publishes all publications to Maven Central"
-                dependsOn(centralTask)
+                doLast {
+                    println("")
+                    println("=".repeat(80))
+                    println("[Publish] SUCCESS: Published to Maven Custom repositories")
+                    customRepos.forEach { repo ->
+                        println("[Publish] Repository ${repo.index}: ${repo.url}")
+                    }
+                    println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+                    println("=".repeat(80))
+                }
             }
         }
     }
