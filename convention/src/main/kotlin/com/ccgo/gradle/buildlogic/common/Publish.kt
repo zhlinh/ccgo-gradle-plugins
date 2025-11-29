@@ -11,6 +11,8 @@
 
 package com.ccgo.gradle.buildlogic.common
 
+import com.ccgo.gradle.buildlogic.common.utils.ConfigKey
+import com.ccgo.gradle.buildlogic.common.utils.ConfigProvider
 import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUrl
 import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUserEmail
 import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUserName
@@ -32,15 +34,43 @@ import org.gradle.kotlin.dsl.withType
 import org.gradle.plugins.signing.SigningExtension
 
 private const val DEFAULT_CENTRAL_DOMAIN = "central.sonatype.com"
-// ./gradlew publishMainPublicationToMavenRepository --no-daemon
-private const val MAIN_PUBLICATION_NAME = "main"
-// ./gradlew publishTestPublicationToMavenRepository --no-daemon
+
+// Repository names for unified command naming
+// Local:  ./gradlew publishToMavenLocal --no-daemon
+private const val REPO_NAME_LOCAL = "MavenLocal"
+// Custom: ./gradlew publishToMavenCustom --no-daemon (publishes to all custom repos)
+private const val REPO_NAME_CUSTOM = "MavenCustom"
+
+// Publication names
+// Release: ./gradlew publishAllPublicationsToMavenLocalRepository --no-daemon
+private const val RELEASE_PUBLICATION_NAME = "release"
+// Test:    ./gradlew publishTestPublicationToMavenLocalRepository --no-daemon
 private const val TEST_PUBLICATION_NAME = "test"
-// ./gradlew publishMavenPublicationToMavenCentralRepository --no-daemon
+// Maven Central (vanniktech): ./gradlew publishAllPublicationsToMavenCentralRepository --no-daemon
 private const val MAVEN_PUBLICATION_NAME = "maven"
 
 /**
  * Configures the publishing for the project.
+ *
+ * Publish commands (unified naming):
+ * - ./gradlew publishToMavenCentral  # Publish to Maven Central
+ * - ./gradlew publishToMavenLocal    # Publish to local Maven repository
+ * - ./gradlew publishToMavenCustom   # Publish to custom Maven repository
+ *
+ * Configuration sources (priority from high to low):
+ * 1. Environment variables
+ * 2. gradle.properties (project level or user level ~/.gradle/gradle.properties)
+ * 3. CCGO.toml (project root)
+ *
+ * Supported environment variables and gradle.properties keys:
+ * - MAVEN_CENTRAL_USERNAME / mavenCentralUsername
+ * - MAVEN_CENTRAL_PASSWORD / mavenCentralPassword
+ * - SIGNING_IN_MEMORY_KEY / signingInMemoryKey
+ * - SIGNING_IN_MEMORY_KEY_PASSWORD / signingInMemoryKeyPassword
+ * - MAVEN_LOCAL_PATH / mavenLocalPath
+ * - MAVEN_CUSTOM_URLS / mavenCustomUrls (comma-separated)
+ * - MAVEN_CUSTOM_USERNAMES / mavenCustomUsernames (comma-separated)
+ * - MAVEN_CUSTOM_PASSWORDS / mavenCustomPasswords (comma-separated)
  */
 internal fun Project.configurePublish() {
     project.afterEvaluate {
@@ -65,9 +95,9 @@ private fun Project.configureSign() {
                 println("sign signingKey is empty, skip sign publication")
                 return@sign
             }
-            val signingPassword = getLocalProperties("signing.password", "")
+            val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
             useInMemoryPgpKeys(signingKey, signingPassword)
-            publishing.publications.asMap.filter { it.key == MAIN_PUBLICATION_NAME }.forEach { (_, publication) ->
+            publishing.publications.asMap.filter { it.key == RELEASE_PUBLICATION_NAME }.forEach { (_, publication) ->
                 println("sign publication: ${publication.name}")
                 sign(publication as MavenPublication)
             }
@@ -78,15 +108,13 @@ private fun Project.configureSign() {
 /**
  * Configures the maven publishing for the project.
  *
- * config the url, username, password in local.properties, the format like
- * comm.maven.count=2
- * comm.maven.url0=https\://xxx.com/xx
- * comm.maven.username0=xxx
- * comm.maven.password0=xxx
- * comm.maven.url1=/Users/path/prebuilds/repository
+ * Supports three types of Maven repositories:
+ * 1. Maven Central - via vanniktech plugin
+ * 2. Local Maven - local directory path
+ * 3. Custom Maven - custom URL with optional credentials
  */
 private fun Project.configureMaven() {
-    // configure custom maven repository
+    // configure custom maven repositories (local + custom URL)
     configureCustomMaven()
     // configure central maven repository
     configureCentralMaven()
@@ -95,7 +123,6 @@ private fun Project.configureMaven() {
 private fun Project.configureCentralMaven() {
     configureVanniktechCentralMaven()
 }
-
 
 private fun Project.configureVanniktechCentralMaven() {
     // https://github.com/vanniktech/gradle-maven-publish-plugin
@@ -113,62 +140,84 @@ private fun Project.configureVanniktechCentralMaven() {
     }
 }
 
+/**
+ * Configures custom Maven repositories including local and remote.
+ *
+ * Unified command naming:
+ * - Maven Central: ./gradlew publishAllPublicationsToMavenCentralRepository
+ * - Local Maven:   ./gradlew publishToMavenLocal
+ * - Custom Maven:  ./gradlew publishToMavenCustom (or publishToMavenCustom0, publishToMavenCustom1, ...)
+ *
+ * Configuration via environment variables or gradle.properties:
+ * - Local: MAVEN_LOCAL_PATH / mavenLocalPath
+ * - Custom: MAVEN_CUSTOM_URLS / mavenCustomUrls (comma-separated)
+ *           MAVEN_CUSTOM_USERNAMES / mavenCustomUsernames (comma-separated)
+ *           MAVEN_CUSTOM_PASSWORDS / mavenCustomPasswords (comma-separated)
+ */
 private fun Project.configureCustomMaven() {
-    // execute "./gradlew publishMainPublicationToMavenRepository"
     extensions.configure<PublishingExtension> {
         repositories {
-            val mavenCount = getLocalProperties("comm.maven.count", "0").toInt()
-            val taskName = project.gradle.startParameter.taskNames.firstOrNull()
-            var validMavenCount = 0
-            var lastUrl = ""
-            if (mavenCount > 0) {
-                for (i in 0 until mavenCount) {
-                    val url = getLocalProperties("comm.maven.url${i}", "")
-                    val username = getLocalProperties("comm.maven.username${i}", "")
-                    val password = getLocalProperties("comm.maven.password${i}", "")
-                    if (url.isEmpty()) {
-                        // empty
-                        continue
-                    }
-                    lastUrl = url
-                    if (url.contains(DEFAULT_CENTRAL_DOMAIN)) {
-                        // skip central.sonatype.com
-                        continue
-                    }
-                    validMavenCount++
-                    maven {
-                        if (mavenCount > 1 && i != 0) {
-                            this.name = "maven${i}"
-                        }
-                        this.url = uri(url)
-                        if (username.isNotEmpty() && password.isNotEmpty()) {
-                            credentials {
-                                this.username = username
-                                this.password = password
-                            }
-                        }
-                    }
+            var validRepoCount = 0
+
+            // 1. Configure local Maven repository
+            // Command: ./gradlew publishToMavenLocal
+            val localPath = ConfigProvider.getLocalMavenPath(project)
+            if (!localPath.isNullOrBlank()) {
+                maven {
+                    name = REPO_NAME_LOCAL
+                    url = uri(localPath)
+                    println("[Publish] Added Local Maven repository: $localPath")
+                    println("[Publish] Command: ./gradlew publishTo${REPO_NAME_LOCAL}")
                 }
-            } else {
-                if (taskName != null && taskName.contains("publish")) {
-                    throw Exception( getErrorHint(hintCount = true) )
-                } else {
-                    println( getErrorHint(hintCount = false) )
-                }
+                validRepoCount++
             }
-            if (validMavenCount == 0 && !lastUrl.contains(DEFAULT_CENTRAL_DOMAIN)) {
-                if (taskName != null && taskName.contains("publish")) {
-                    throw Exception( getErrorHint(hintCount = false) )
+
+            // 2. Configure custom Maven repositories (comma-separated)
+            // Command: ./gradlew publishToMavenCustom (publishes to all custom repos)
+            val customRepos = ConfigProvider.getCustomMavenRepos(project)
+            customRepos.forEach { repo ->
+                // Skip Maven Central URLs (handled by vanniktech plugin)
+                if (repo.url.contains(DEFAULT_CENTRAL_DOMAIN)) {
+                    println("[Publish] Skipping Maven Central URL in custom repos: ${repo.url}")
+                    return@forEach
+                }
+
+                // Always use indexed name (MavenCustom0, MavenCustom1, ...)
+                val repoName = "${REPO_NAME_CUSTOM}${repo.index}"
+                maven {
+                    name = repoName
+                    url = uri(repo.url)
+                    if (repo.username.isNotEmpty() && repo.password.isNotEmpty()) {
+                        credentials {
+                            username = repo.username
+                            password = repo.password
+                        }
+                    }
+                    println("[Publish] Added Custom Maven repository: $repoName -> ${repo.url}")
+                }
+                validRepoCount++
+            }
+            if (customRepos.isNotEmpty()) {
+                println("[Publish] Command: ./gradlew publishToMavenCustom (publishes to all ${customRepos.size} custom repos)")
+            }
+
+            // 3. Check if we have at least one repository configured
+            val taskName = project.gradle.startParameter.taskNames.firstOrNull()
+            if (validRepoCount == 0) {
+                val isPublishTask = taskName?.contains("publish") == true &&
+                    !taskName.contains("MavenCentral")
+                if (isPublishTask) {
+                    throw Exception(getConfigurationHint())
                 } else {
-                    println( getErrorHint(hintCount = false) )
+                    println(getConfigurationHint())
                 }
             }
         }
 
         publications {
             val publishConfig = mutableMapOf(
-                // main always use release
-                MAIN_PUBLICATION_NAME to "target/${cfgs.getMainArchiveAarName("release")}",
+                // release always use release build
+                RELEASE_PUBLICATION_NAME to "target/${cfgs.getMainArchiveAarName("release")}",
             )
             if (!cfgs.isRelease) {
                 // if not release, add test publication
@@ -176,7 +225,7 @@ private fun Project.configureCustomMaven() {
             }
             (publications.getByName(MAVEN_PUBLICATION_NAME) as? MavenPublication)?.apply {
                 configurePublication(this, MAVEN_PUBLICATION_NAME,
-                    publishConfig[MAIN_PUBLICATION_NAME]!!, false)
+                    publishConfig[RELEASE_PUBLICATION_NAME]!!, false)
             }
 
             for ((publishName, artifactName) in publishConfig) {
@@ -187,6 +236,56 @@ private fun Project.configureCustomMaven() {
             }  // for
         }  // publications
     }  // PublishingExtension
+
+    // Register convenient task aliases
+    registerPublishTaskAliases()
+}
+
+/**
+ * Registers convenient task aliases for easier command usage.
+ * - publishToMavenLocal -> publishAllPublicationsToMavenLocalRepository
+ * - publishToMavenCustom -> publishes to ALL custom Maven repositories
+ * - publishToMavenCentral -> publishAllPublicationsToMavenCentralRepository
+ */
+private fun Project.registerPublishTaskAliases() {
+    afterEvaluate {
+        // Alias for Maven Local
+        val localTask = tasks.findByName("publishAllPublicationsTo${REPO_NAME_LOCAL}Repository")
+        if (localTask != null) {
+            tasks.register("publishTo${REPO_NAME_LOCAL}") {
+                group = "publishing"
+                description = "Publishes all publications to the local Maven repository"
+                dependsOn(localTask)
+            }
+        }
+
+        // Alias for Maven Custom - publishes to ALL custom repositories
+        val customTasks = mutableListOf<Any>()
+        // Find all custom repository tasks (MavenCustom0, MavenCustom1, ...)
+        for (i in 0..9) {
+            val task = tasks.findByName("publishAllPublicationsTo${REPO_NAME_CUSTOM}${i}Repository")
+            if (task != null) {
+                customTasks.add(task)
+            }
+        }
+        if (customTasks.isNotEmpty()) {
+            tasks.register("publishTo${REPO_NAME_CUSTOM}") {
+                group = "publishing"
+                description = "Publishes all publications to all custom Maven repositories"
+                dependsOn(customTasks)
+            }
+        }
+
+        // Alias for Maven Central
+        val centralTask = tasks.findByName("publishAllPublicationsToMavenCentralRepository")
+        if (centralTask != null) {
+            tasks.register("publishToMavenCentral") {
+                group = "publishing"
+                description = "Publishes all publications to Maven Central"
+                dependsOn(centralTask)
+            }
+        }
+    }
 }
 
 private fun Project.configurePublication(
@@ -284,38 +383,81 @@ private fun Project.configurePom(config: MavenPom,
     }  // MavenPom
 }
 
-private fun getErrorHint(hintCount: Boolean): String {
-    val hintCountStr = if (hintCount) "\ncomm.maven.count=1" else ""
-    return "【Error】[Publish-Configuration] failed to get comm.maven.count, you need to add" +
-            " at least one maven config in local.properties" +
-            hintCountStr +
-            "\ncomm.maven.url0=<MAVEN_URL>" +
-            "\ncomm.maven.username0=<USERNAME>" +
-            "\ncomm.maven.password0=<PASSWORD>"
+/**
+ * Returns configuration hint for Maven repository setup.
+ */
+private fun getConfigurationHint(): String {
+    return """
+        |[Publish-Configuration] No Maven repository configured.
+        |
+        |Configure via environment variables:
+        |  # Local Maven repository
+        |  export MAVEN_LOCAL_PATH=/path/to/local/repo
+        |
+        |  # Custom Maven repositories (comma-separated for multiple)
+        |  export MAVEN_CUSTOM_URLS=https://maven.example.com/releases,https://maven2.example.com
+        |  export MAVEN_CUSTOM_USERNAMES=user1,user2
+        |  export MAVEN_CUSTOM_PASSWORDS=pass1,pass2
+        |
+        |Or configure via ~/.gradle/gradle.properties:
+        |  mavenLocalPath=/path/to/local/repo
+        |  mavenCustomUrls=https://maven.example.com/releases
+        |  mavenCustomUsernames=user1
+        |  mavenCustomPasswords=pass1
+        |
+        |Or configure via CCGO.toml:
+        |  [publish.maven]
+        |  local_path = "~/.m2/repository"
+        |  custom_urls = "https://maven.example.com"
+        |  custom_usernames = "user1"
+        |  custom_passwords = "pass1"
+        |
+        |Available publish commands:
+        |  ./gradlew publishToMavenCentral  # Publish to Maven Central
+        |  ./gradlew publishToMavenLocal    # Publish to local Maven repository
+        |  ./gradlew publishToMavenCustom   # Publish to custom Maven repository
+    """.trimMargin()
 }
 
-private fun Project.getSigningInMemoryKey() : String {
-    var signingKey = getLocalProperties("signing.key", "")
-    val signingPassword = getLocalProperties("signing.password", "")
+/**
+ * Gets the signing key from multiple sources.
+ * Priority: ConfigProvider (env/gradle.properties/CCGO.toml) > local.properties legacy
+ */
+private fun Project.getSigningInMemoryKey(): String {
+    // 1. Try ConfigProvider (env > gradle.properties > CCGO.toml)
+    val signingKey = ConfigProvider.get(project, ConfigKey.SIGNING_KEY)
     if (signingKey.isNotEmpty()) {
         return signingKey
     }
-    // if empty, try another way
-    var signingKeyId = getLocalProperties("signing.keyId", "")
-    // 1. get key from keyId
-    signingKey = getGpgKeyFromKeyId(signingKeyId, signingPassword)
-    println("signing.keyId:$signingKeyId to signing.key:$signingKey")
-    if (signingKey.isNotEmpty()) {
-        return signingKey
+
+    // 2. Fallback to legacy local.properties for backward compatibility
+    var legacyKey = getLocalProperties("signing.key", "")
+    if (legacyKey.isNotEmpty()) {
+        println("[Publish] Using legacy signing.key from local.properties (consider migrating to gradle.properties)")
+        return legacyKey
     }
+
+    // 3. Try to get key from keyId (legacy)
+    val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
+        .ifEmpty { getLocalProperties("signing.password", "") }
+    val signingKeyId = getLocalProperties("signing.keyId", "")
+    if (signingKeyId.isNotEmpty()) {
+        legacyKey = getGpgKeyFromKeyId(signingKeyId, signingPassword)
+        println("signing.keyId:$signingKeyId to signing.key:$legacyKey")
+        if (legacyKey.isNotEmpty()) {
+            return legacyKey
+        }
+    }
+
+    // 4. Try to get key from keyRingFile (legacy)
     val secretKeyRingFile = getLocalProperties("signing.secretKeyRingFile", "")
-    if (secretKeyRingFile.isEmpty()) {
-        return ""
+    if (secretKeyRingFile.isNotEmpty()) {
+        legacyKey = getGpgKeyFromKeyRingFile(secretKeyRingFile, signingPassword)
+        println("signing.secretKeyRingFile:$secretKeyRingFile to signing.key:$legacyKey")
+        return legacyKey
     }
-    // 2. get key from keyRingFile
-    signingKey = getGpgKeyFromKeyRingFile(secretKeyRingFile, signingPassword)
-    println("signing.secretKeyRingFile:$secretKeyRingFile to signing.key:$signingKey")
-    return signingKey
+
+    return ""
 }
 
 private fun Project.configureSourcesAndJavaDoc() {
@@ -334,21 +476,18 @@ private fun Project.configureSourcesAndJavaDoc() {
     }
 }
 
+/**
+ * Sets up system environment for vanniktech plugin.
+ * Uses ConfigProvider to get credentials from env/gradle.properties/CCGO.toml.
+ */
 private fun Project.setSystemEnv() {
-    // set environment variable
     val envMap = mapOf(
-        "ORG_GRADLE_PROJECT_mavenCentralUsername" to getLocalProperties("mavenCentralUsername", ""),
-        "ORG_GRADLE_PROJECT_mavenCentralPassword" to getLocalProperties("mavenCentralPassword", ""),
+        "ORG_GRADLE_PROJECT_mavenCentralUsername" to ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_USERNAME),
+        "ORG_GRADLE_PROJECT_mavenCentralPassword" to ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_PASSWORD),
         "ORG_GRADLE_PROJECT_signingInMemoryKey" to getSigningInMemoryKey(),
         "ORG_GRADLE_PROJECT_signingInMemoryKeyId" to getLocalProperties("signing.keyId", ""),
-        "ORG_GRADLE_PROJECT_signingInMemoryKeyPassword" to getLocalProperties("signing.password", "")
+        "ORG_GRADLE_PROJECT_signingInMemoryKeyPassword" to ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
     )
-    // or set in ~/.gradle/gradle.properties
-    // mavenCentralUsername
-    // mavenCentralPassword
-    // signing.keyId
-    // signing.password
-    // signing.secretKeyRingFile
     // detail in https://vanniktech.github.io/gradle-maven-publish-plugin/central/#configuring-the-pom
     tasks.withType(Exec::class.java).configureEach {
         // set env
@@ -361,7 +500,7 @@ private fun Project.setSystemEnv() {
     }
 }
 
-private fun Project.getProjectArtifactId() : String {
+private fun Project.getProjectArtifactId(): String {
     val combinedSuffix = arrayOf(cfgs.commPublishChannelDesc.lowercase(), cfgs.androidStlSuffix.lowercase())
         .filter { it.isNotEmpty() }
         .joinToString("-") {

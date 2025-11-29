@@ -1,20 +1,20 @@
 # Publishing CCGO Gradle Plugins
 
-This guide explains how to publish the CCGO Gradle Plugins to Maven Central (Sonatype OSSRH).
+This guide explains how to publish the CCGO Gradle Plugins to Maven Central, local Maven repository, or custom Maven repositories.
 
 ## Prerequisites
 
-### 1. Sonatype OSSRH Account
+### 1. Sonatype OSSRH Account (for Maven Central)
 
-Register for a Sonatype JIRA account and request access to the `com.mojeter.ccgo.gradle` group ID:
+Register for a Sonatype account and request access to the `com.mojeter.ccgo.gradle` group ID:
 
-1. Create account at: https://issues.sonatype.org/
-2. Create a "New Project" ticket requesting access to `com.mojeter.ccgo.gradle`
-3. Wait for approval (usually 1-2 business days)
+1. Create account at: https://central.sonatype.com/
+2. Generate User Token from Account settings
+3. Request namespace verification for `com.mojeter.ccgo.gradle`
 
 Reference: https://central.sonatype.org/publish/publish-guide/
 
-### 2. GPG Key for Signing
+### 2. GPG Key for Signing (Optional for Local/Custom, Required for Maven Central)
 
 #### Generate a GPG Key (if you don't have one)
 
@@ -55,9 +55,26 @@ Or use the provided helper script:
 
 ## Configuration
 
-### Option 1: Local Development (Recommended)
+Configuration is read from multiple sources with the following priority (highest to lowest):
 
-Add credentials to `~/.gradle/gradle.properties`:
+1. **Environment variables**
+2. **gradle.properties** (project level or `~/.gradle/gradle.properties`)
+3. **CCGO.toml** (for projects using CCGO template)
+
+### Configuration Options
+
+| Purpose | Environment Variable | gradle.properties Key |
+|---------|---------------------|----------------------|
+| Maven Central Username | `MAVEN_CENTRAL_USERNAME` | `mavenCentralUsername` |
+| Maven Central Password | `MAVEN_CENTRAL_PASSWORD` | `mavenCentralPassword` |
+| Signing Key | `SIGNING_IN_MEMORY_KEY` | `signingInMemoryKey` |
+| Signing Key Password | `SIGNING_IN_MEMORY_KEY_PASSWORD` | `signingInMemoryKeyPassword` |
+| Local Maven Path | `MAVEN_LOCAL_PATH` | `mavenLocalPath` |
+| Custom Maven URLs | `MAVEN_CUSTOM_URLS` | `mavenCustomUrls` |
+| Custom Maven Usernames | `MAVEN_CUSTOM_USERNAMES` | `mavenCustomUsernames` |
+| Custom Maven Passwords | `MAVEN_CUSTOM_PASSWORDS` | `mavenCustomPasswords` |
+
+### Option 1: Local Development (~/.gradle/gradle.properties)
 
 ```properties
 # Maven Central Portal credentials (get User Token from https://central.sonatype.com/account)
@@ -69,32 +86,57 @@ mavenCentralPassword=your-user-token-password
 # Then paste the entire key content, replacing newlines with \n
 signingInMemoryKey=-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nYOUR_KEY_CONTENT_HERE\n-----END PGP PRIVATE KEY BLOCK-----
 signingInMemoryKeyPassword=your-gpg-key-passphrase
+
+# Local Maven repository path (optional)
+mavenLocalPath=~/.m2/repository
+
+# Custom Maven repositories (optional, comma-separated for multiple)
+mavenCustomUrls=https://maven.company.com/releases,https://maven.private.com/repo
+mavenCustomUsernames=user1,user2
+mavenCustomPasswords=pass1,pass2
 ```
 
-**Why in-memory keys are recommended:**
-- Works reliably in non-interactive environments (Gradle builds)
-- No GPG agent or TTY issues
-- Same key can be used in CI/CD pipelines
-- Gradle handles the signing automatically
-
-**Alternative: Use GPG Agent (less reliable)**
-- If you don't want to export your key, you can rely on local GPG agent
-- May fail with "Inappropriate ioctl for device" errors in some environments
-- Requires proper GPG and pinentry configuration
-
-### Option 2: CI/CD Environment
-
-Set environment variables or Gradle properties:
+### Option 2: CI/CD Environment Variables
 
 ```bash
 # Maven Central Portal credentials
-export ORG_GRADLE_PROJECT_mavenCentralUsername=your-user-token-username
-export ORG_GRADLE_PROJECT_mavenCentralPassword=your-user-token-password
+export MAVEN_CENTRAL_USERNAME=your-user-token-username
+export MAVEN_CENTRAL_PASSWORD=your-user-token-password
 
-# Signing credentials (optional)
-export ORG_GRADLE_PROJECT_signingInMemoryKey=$(cat private-key.asc)
-export ORG_GRADLE_PROJECT_signingInMemoryKeyPassword=your-key-password
+# Signing credentials
+export SIGNING_IN_MEMORY_KEY="-----BEGIN PGP PRIVATE KEY BLOCK-----
+...key content...
+-----END PGP PRIVATE KEY BLOCK-----"
+export SIGNING_IN_MEMORY_KEY_PASSWORD=your-key-password
+
+# Local Maven repository (optional)
+export MAVEN_LOCAL_PATH=~/.m2/repository
+
+# Custom Maven repositories (optional, comma-separated)
+export MAVEN_CUSTOM_URLS=https://maven.company.com/releases
+export MAVEN_CUSTOM_USERNAMES=user1
+export MAVEN_CUSTOM_PASSWORDS=pass1
 ```
+
+## Publish Commands
+
+The following unified commands are available:
+
+| Command | Description |
+|---------|-------------|
+| `./gradlew publishToMavenCentral` | Publish to Maven Central (requires signing) |
+| `./gradlew publishToMavenLocal` | Publish to local Maven repository |
+| `./gradlew publishToMavenCustom` | Publish to all custom Maven repositories |
+
+### Signing Behavior
+
+| Condition | Signing |
+|-----------|---------|
+| `signingInMemoryKey` + `signingInMemoryKeyPassword` configured | Uses in-memory PGP key |
+| GPG installed with secret keys | Uses GPG command-line |
+| Neither configured | Skips signing (still works for Local/Custom) |
+
+**Note**: Maven Central requires signed artifacts. Publishing without signing will fail for Maven Central but works for local and custom repositories.
 
 ## Publishing Steps
 
@@ -106,24 +148,37 @@ Edit `gradle.properties`:
 VERSION_NAME=1.0.0  # Remove -SNAPSHOT for release
 ```
 
-### 2. Publish to Maven Local (Test)
+### 2. Publish to Local Maven (Testing)
 
 ```bash
-# Test locally first (no signing required)
+# Set local path via environment variable
+export MAVEN_LOCAL_PATH=~/.m2/repository
+
+# Publish to local
 ./gradlew publishToMavenLocal
 
 # Verify in ~/.m2/repository/com/mojeter/ccgo/gradle/
+ls ~/.m2/repository/com/mojeter/ccgo/gradle/convention/
 ```
 
-**Note**: Local publishing does not require signing. Signing is only enabled when `PUBLISH_TO_MAVEN_CENTRAL=true` is set.
-
-### 3. Publish to Maven Central Portal
-
-This project uses [vanniktech/gradle-maven-publish-plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/) for simplified Maven Central publishing.
+### 3. Publish to Custom Maven Repository
 
 ```bash
-# Publish to Maven Central Portal
-./gradlew publishAllPublicationsToMavenCentralRepository
+# Set custom repository via environment variables
+export MAVEN_CUSTOM_URLS=https://maven.company.com/releases
+export MAVEN_CUSTOM_USERNAMES=your-username
+export MAVEN_CUSTOM_PASSWORDS=your-password
+
+# Publish to custom repos
+./gradlew publishToMavenCustom
+```
+
+### 4. Publish to Maven Central
+
+```bash
+# Ensure credentials are configured in ~/.gradle/gradle.properties
+# Then publish
+./gradlew publishToMavenCentral
 ```
 
 The plugin will:
@@ -145,33 +200,25 @@ Snapshots are published to: https://s01.oss.sonatype.org/content/repositories/sn
 
 Releases are published to: https://repo1.maven.org/maven2/ (Maven Central)
 
-## Gradle Tasks
-
-| Task | Description |
-|------|-------------|
-| `publishToMavenLocal` | Publish to local Maven repository (~/.m2) |
-| `publishAllPublicationsToMavenCentralRepository` | Publish to Maven Central staging |
-| `publish` | Publish to all configured repositories |
-
 ## Troubleshooting
 
 ### Signing Failed
 
 **Problem**: `Signing key not found` or `gpg: signing failed`
 
-**Solution**:
-- Make sure GPG is installed: `gpg --version`
-- Check keys exist: `gpg --list-keys`
-- For CI/CD, ensure `SIGNING_KEY` and `SIGNING_PASSWORD` are set
+**Solutions**:
+1. **For in-memory key**: Ensure `signingInMemoryKey` contains the full PGP key with `\n` replacing newlines
+2. **For GPG agent**: Check GPG has secret keys: `gpg --list-secret-keys`
+3. **For Local/Custom repos**: Signing is optional, artifacts will publish without signatures
 
 ### Authentication Failed
 
 **Problem**: `401 Unauthorized` when publishing
 
-**Solution**:
-- Verify Sonatype credentials are correct
-- Check if your account has access to `com.mojeter.ccgo.gradle` group ID
-- Wait for Sonatype approval if you just requested access
+**Solutions**:
+- Verify credentials are correct
+- For Maven Central: Check User Token at https://central.sonatype.com/account
+- For custom repos: Verify username/password match the repository configuration
 
 ### POM Validation Failed
 
@@ -190,6 +237,14 @@ Releases are published to: https://repo1.maven.org/maven2/ (Maven Central)
 - Wait at least 2 hours for sync
 - Check https://repo1.maven.org/maven2/com/mojeter/ccgo/gradle/
 - If still missing after 24 hours, contact Sonatype support
+
+### Task Not Found
+
+**Problem**: `Task 'publishToMavenLocal' not found`
+
+**Solution**:
+- Ensure `MAVEN_LOCAL_PATH` or `mavenLocalPath` is configured
+- Repositories are only registered when their configuration is present
 
 ## Usage After Publishing
 
@@ -210,8 +265,21 @@ plugins {
 }
 ```
 
+For local or custom repository usage:
+
+```kotlin
+// settings.gradle.kts
+pluginManagement {
+    repositories {
+        maven { url = uri("/path/to/local/repo") }  // or custom URL
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+```
+
 ## References
 
-- [Sonatype OSSRH Guide](https://central.sonatype.org/publish/publish-guide/)
-- [Gradle Plugin Portal Publishing](https://plugins.gradle.org/docs/publish-plugin)
+- [Sonatype Central Portal](https://central.sonatype.com/)
+- [Gradle Maven Publish Plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/)
 - [Maven Central Requirements](https://central.sonatype.org/publish/requirements/)

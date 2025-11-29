@@ -43,6 +43,7 @@ dependencies {
     compileOnly(libs.room.gradlePlugin)
     compileOnly(libs.maven.publishPlugin)  // Needed for Publish.kt compilation
     implementation(libs.truth)
+    implementation(libs.tomlj)  // For parsing CCGO.toml configuration
 }
 
 tasks {
@@ -125,40 +126,59 @@ gradlePlugin {
     }
 }
 
-// Configure signing credentials first
-// vanniktech plugin prefers signingInMemoryKey and signingInMemoryKeyPassword
-val signingKey = project.findProperty("signingInMemoryKey")?.toString()
-    ?: project.findProperty("SIGNING_KEY")?.toString()
-    ?: System.getenv("SIGNING_KEY")
-val signingPassword = project.findProperty("signingInMemoryKeyPassword")?.toString()
-    ?: project.findProperty("SIGNING_PASSWORD")?.toString()
-    ?: System.getenv("SIGNING_PASSWORD")
-val hasSigningKeys = !signingKey.isNullOrBlank() && !signingPassword.isNullOrBlank()
+// =============================================================================
+// Publishing Configuration
+// =============================================================================
+// Unified configuration reading (same as common/Publish.kt):
+// Priority: Environment Variable > gradle.properties > default
+//
+// Publish commands:
+// - ./gradlew publishToMavenCentral  # Publish to Maven Central
+// - ./gradlew publishToMavenLocal    # Publish to local Maven repository
+// - ./gradlew publishToMavenCustom   # Publish to all custom Maven repositories
+// =============================================================================
 
-// Check if gpg-agent is available (for local development)
+// Helper function to get config value with priority: env > gradle.properties
+fun getConfigValue(envKey: String, gradleKey: String, defaultValue: String = ""): String {
+    return System.getenv(envKey)?.takeIf { it.isNotBlank() }
+        ?: project.findProperty(gradleKey)?.toString()?.takeIf { it.isNotBlank() }
+        ?: defaultValue
+}
+
+// Read credentials using unified priority
+val mavenCentralUsername = getConfigValue("MAVEN_CENTRAL_USERNAME", "mavenCentralUsername")
+val mavenCentralPassword = getConfigValue("MAVEN_CENTRAL_PASSWORD", "mavenCentralPassword")
+val signingKey = getConfigValue("SIGNING_IN_MEMORY_KEY", "signingInMemoryKey")
+val signingPassword = getConfigValue("SIGNING_IN_MEMORY_KEY_PASSWORD", "signingInMemoryKeyPassword")
+val mavenLocalPath = getConfigValue("MAVEN_LOCAL_PATH", "mavenLocalPath")
+val mavenCustomUrls = getConfigValue("MAVEN_CUSTOM_URLS", "mavenCustomUrls")
+val mavenCustomUsernames = getConfigValue("MAVEN_CUSTOM_USERNAMES", "mavenCustomUsernames")
+val mavenCustomPasswords = getConfigValue("MAVEN_CUSTOM_PASSWORDS", "mavenCustomPasswords")
+
+val hasSigningKeys = signingKey.isNotBlank() && signingPassword.isNotBlank()
+
+// Check if gpg-agent is available with secret keys (for local development)
 val hasGpgAgent = try {
-    val result = Runtime.getRuntime().exec(arrayOf("gpg", "--list-keys"))
-    result.waitFor() == 0
+    // Check if GPG has any secret keys available
+    val process = Runtime.getRuntime().exec(arrayOf("gpg", "--list-secret-keys"))
+    val output = process.inputStream.bufferedReader().readText()
+    process.waitFor() == 0 && output.contains("sec")
 } catch (e: Exception) {
     false
 }
 
 // Set default empty values for Maven Central credentials to prevent build service errors
-// These will be overridden by actual values in ~/.gradle/gradle.properties when publishing
 if (!project.hasProperty("mavenCentralUsername")) {
-    project.ext.set("mavenCentralUsername", "")
+    project.ext.set("mavenCentralUsername", mavenCentralUsername)
 }
 if (!project.hasProperty("mavenCentralPassword")) {
-    project.ext.set("mavenCentralPassword", "")
+    project.ext.set("mavenCentralPassword", mavenCentralPassword)
 }
 
-// Configure vanniktech maven-publish plugin
-// This plugin handles Maven Central Portal publishing automatically
+// Configure vanniktech maven-publish plugin for Maven Central
 mavenPublishing {
-    // Coordinates are set from project group and version
     coordinates(group.toString(), "convention", version.toString())
 
-    // POM configuration
     pom {
         name.set("CCGO Gradle Build Logic Convention Plugins")
         description.set("Convention plugins for CCGO cross-platform C++ projects")
@@ -186,66 +206,147 @@ mavenPublishing {
         }
     }
 
-    // Configure publishing to Maven Central Portal
-    // Note: Actual credentials should be in ~/.gradle/gradle.properties as:
-    // mavenCentralUsername=your-user-token-username
-    // mavenCentralPassword=your-user-token-password
     publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL, automaticRelease = true)
 
-    // Enable signing - will be configured below
     if (hasSigningKeys || hasGpgAgent) {
         signAllPublications()
     }
 }
 
-// Set GPG properties for GnuPG command-line signing (before configuring signing plugin)
+// Configure custom Maven repositories (local + custom URLs)
+publishing {
+    repositories {
+        // Local Maven repository
+        if (mavenLocalPath.isNotBlank()) {
+            val expandedPath = if (mavenLocalPath.startsWith("~")) {
+                mavenLocalPath.replaceFirst("~", System.getProperty("user.home"))
+            } else {
+                mavenLocalPath
+            }
+            maven {
+                name = "MavenLocal"
+                url = uri(expandedPath)
+            }
+            println("[Publish] Added Local Maven repository: $expandedPath")
+        }
+
+        // Custom Maven repositories (comma-separated)
+        if (mavenCustomUrls.isNotBlank()) {
+            val urls = mavenCustomUrls.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val usernames = mavenCustomUsernames.split(",").map { it.trim() }
+            val passwords = mavenCustomPasswords.split(",").map { it.trim() }
+
+            urls.forEachIndexed { index, url ->
+                maven {
+                    name = "MavenCustom$index"
+                    this.url = uri(url)
+                    val username = usernames.getOrElse(index) { "" }
+                    val password = passwords.getOrElse(index) { "" }
+                    if (username.isNotBlank() && password.isNotBlank()) {
+                        credentials {
+                            this.username = username
+                            this.password = password
+                        }
+                    }
+                }
+                println("[Publish] Added Custom Maven repository: MavenCustom$index -> $url")
+            }
+        }
+    }
+}
+
+// Register convenient task aliases (only if not already registered)
+afterEvaluate {
+    // Alias for Maven Central (check if already exists from vanniktech plugin)
+    if (tasks.findByName("publishToMavenCentral") == null) {
+        tasks.findByName("publishAllPublicationsToMavenCentralRepository")?.let { centralTask ->
+            tasks.register("publishToMavenCentral") {
+                group = "publishing"
+                description = "Publishes all publications to Maven Central"
+                dependsOn(centralTask)
+            }
+        }
+    }
+
+    // Alias for Maven Local
+    if (tasks.findByName("publishToMavenLocal") == null) {
+        tasks.findByName("publishAllPublicationsToMavenLocalRepository")?.let { localTask ->
+            tasks.register("publishToMavenLocal") {
+                group = "publishing"
+                description = "Publishes all publications to the local Maven repository"
+                dependsOn(localTask)
+            }
+        }
+    }
+
+    // Alias for Maven Custom (publishes to all custom repos)
+    if (tasks.findByName("publishToMavenCustom") == null) {
+        val customTasks = mutableListOf<Any>()
+        for (i in 0..9) {
+            tasks.findByName("publishAllPublicationsToMavenCustom${i}Repository")?.let {
+                customTasks.add(it)
+            }
+        }
+        if (customTasks.isNotEmpty()) {
+            tasks.register("publishToMavenCustom") {
+                group = "publishing"
+                description = "Publishes all publications to all custom Maven repositories"
+                dependsOn(customTasks)
+            }
+        }
+    }
+
+    // Print available publish commands
+    val signingStatus = if (hasSigningKeys) "with signing" else if (hasGpgAgent) "with GPG signing" else "without signing"
+    println("[Publish] Available commands ($signingStatus):")
+    println("[Publish]   ./gradlew publishToMavenCentral  # Publish to Maven Central")
+    if (mavenLocalPath.isNotBlank()) {
+        println("[Publish]   ./gradlew publishToMavenLocal    # Publish to local Maven repository")
+    }
+    if (mavenCustomUrls.isNotBlank()) {
+        println("[Publish]   ./gradlew publishToMavenCustom   # Publish to all custom Maven repositories")
+    }
+}
+
+// Disable signing tasks if no signing credentials are configured
+gradle.taskGraph.whenReady {
+    if (!hasSigningKeys && !hasGpgAgent) {
+        allTasks.filter { it.name.startsWith("sign") }.forEach {
+            it.enabled = false
+        }
+        println("[Publish] Signing disabled (no signing credentials configured)")
+    }
+}
+
+// Set GPG properties for GnuPG command-line signing
 if (hasGpgAgent && !hasSigningKeys) {
-    // Configure GPG executable path for signing plugin
     project.ext.set("signing.gnupg.executable", "gpg")
     project.ext.set("signing.gnupg.useLegacyGpg", false)
 }
 
 // Configure signing plugin
 signing {
-    // Signing is optional - only required when publishing to Maven Central
-    // The vanniktech plugin will fail if signatures are missing for Maven Central publish
     isRequired = false
 
-    // Configure signing credentials
     when {
         hasSigningKeys -> {
-            // Option 1: Use in-memory PGP keys (most reliable)
-            println("Signing configured with in-memory PGP key (key length: ${signingKey?.length ?: 0})")
+            println("Signing configured with in-memory PGP key (key length: ${signingKey.length})")
+            val cleanKey = signingKey.trim().removeSurrounding("\"").removeSurrounding("'")
 
-            // Clean the key: remove surrounding quotes if present
-            val cleanKey = signingKey?.trim()?.removeSurrounding("\"")?.removeSurrounding("'")
-
-            if (cleanKey?.startsWith("-----BEGIN") == true && cleanKey.contains("-----END")) {
-                // Key format looks correct
+            if (cleanKey.startsWith("-----BEGIN") && cleanKey.contains("-----END")) {
                 useInMemoryPgpKeys(cleanKey, signingPassword)
                 println("In-memory PGP key configured successfully")
             } else {
-                // Key format is incorrect
                 println("ERROR: Signing key format is incorrect!")
-                println("The key should start with '-----BEGIN PGP PRIVATE KEY BLOCK-----' and end with '-----END PGP PRIVATE KEY BLOCK-----'")
-                println("Key preview: ${signingKey?.take(60)}...")
-                println("")
-                println("In your ~/.gradle/gradle.properties file, the key should look like:")
-                println("signingInMemoryKey=-----BEGIN PGP PRIVATE KEY BLOCK-----\\n\\n...key content...\\n-----END PGP PRIVATE KEY BLOCK-----")
-                println("")
-                println("Important:")
-                println("1. Do NOT use quotes around the key")
-                println("2. Replace actual newlines with \\n")
-                println("3. Use ./export-gpg-key.sh to see the correct format")
+                println("The key should start with '-----BEGIN PGP PRIVATE KEY BLOCK-----'")
+                println("Key preview: ${signingKey.take(60)}...")
             }
         }
         hasGpgAgent -> {
-            // Option 2: Use GPG command-line tool with gpg-agent
             println("Signing configured with GPG command-line tool")
             useGpgCmd()
         }
         else -> {
-            // No signing configured - will skip signing tasks
             println("WARNING: No signing credentials configured. Artifacts will not be signed.")
             println("For Maven Central publishing, configure signing credentials in ~/.gradle/gradle.properties")
         }
