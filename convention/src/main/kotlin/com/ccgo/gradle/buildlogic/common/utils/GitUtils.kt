@@ -15,34 +15,50 @@ import java.text.SimpleDateFormat
 import java.util.Date
 
 internal fun getGitBranchName(): String {
-    return execCommand("git rev-parse --abbrev-ref HEAD")
+    val result = execCommand("git rev-parse --abbrev-ref HEAD")
+    return result.ifEmpty { "unknown" }
 }
 
 internal fun getGitVersionCode(): String {
-    return execCommand("git rev-list HEAD --count")
+    val result = execCommand("git rev-list HEAD --count")
+    return result.ifEmpty { "0" }
 }
 
 internal fun getGitRevision(): String {
-    return execCommand("git rev-parse --short HEAD")
+    val result = execCommand("git rev-parse --short HEAD")
+    return result.ifEmpty { "unknown" }
 }
 
 internal fun getGitHeadTimeInfo(): String {
     val log = execCommand("git log -n1 --format=%at")
-    val timeStampOfHead = log.toLong() * 1000
-    val date = Date(timeStampOfHead)
-    val sdf = SimpleDateFormat("yyyy-MM-dd")
-    return sdf.format(date)
+    return if (log.isNotEmpty()) {
+        try {
+            val timeStampOfHead = log.toLong() * 1000
+            val date = Date(timeStampOfHead)
+            val sdf = SimpleDateFormat("yyyy-MM-dd")
+            sdf.format(date)
+        } catch (e: NumberFormatException) {
+            SimpleDateFormat("yyyy-MM-dd").format(Date())
+        }
+    } else {
+        SimpleDateFormat("yyyy-MM-dd").format(Date())
+    }
 }
 
 internal fun getPublishSuffix(release: Boolean): String {
     if (release) {
         return "release"
     }
-    var latestTag = execCommand("git rev-list --tags --no-walk --max-count=1")
+    val latestTag = execCommand("git rev-list --tags --no-walk --max-count=1")
+    if (latestTag.isEmpty()) {
+        // No git or no tags, return default beta suffix
+        return "beta.0"
+    }
     val countFromLatestTag = execCommand("git rev-list ${latestTag}..HEAD --count")
+    val count = countFromLatestTag.ifEmpty { "0" }
     val stat = execCommand("git diff --stat")
     val workSpaceStatus = if (stat.isEmpty()) "" else "-dirty"
-    return "beta.${countFromLatestTag}${workSpaceStatus}"
+    return "beta.${count}${workSpaceStatus}"
 }
 
 internal fun getCurrentTag(release: Boolean, name: String, suffix: String): String {
