@@ -1,0 +1,93 @@
+#
+# Copyright 2024 zhlinh and ccgo Project Authors. All rights reserved.
+# Use of this source code is governed by a MIT-style
+# license that can be found at
+#
+# https://opensource.org/license/MIT
+#
+# The above copyright notice and this permission
+# notice shall be included in all copies or
+# substantial portions of the Software.
+
+name: Publish to Maven Central
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on tags like v0.0.1, v1.0.0, etc.
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+
+jobs:
+  publish:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate tag version
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          GRADLE_VERSION=$(grep "VERSION_NAME=" gradle.properties | cut -d'=' -f2)
+          echo "Tag version: $TAG_VERSION"
+          echo "Gradle version: $GRADLE_VERSION"
+          if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match gradle.properties VERSION_NAME ($GRADLE_VERSION)"
+            exit 1
+          fi
+          echo "Version validation passed: $TAG_VERSION"
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build and validate
+        run: ./gradlew build --no-daemon
+
+      - name: Publish to Maven Central
+        run: ./gradlew publishToMavenCentral --no-daemon
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          SIGNING_IN_MEMORY_KEY: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
+          SIGNING_IN_MEMORY_KEY_PASSWORD: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            Add to your `settings.gradle.kts`:
+            ```kotlin
+            pluginManagement {
+                repositories {
+                    mavenCentral()
+                    gradlePluginPortal()
+                }
+            }
+            ```
+
+            Add to your `build.gradle.kts`:
+            ```kotlin
+            plugins {
+                id("com.mojeter.ccgo.gradle.android.library") version "${{ github.ref_name }}"
+            }
+            ```
+
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

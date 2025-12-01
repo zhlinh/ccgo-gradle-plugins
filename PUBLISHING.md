@@ -279,6 +279,58 @@ pluginManagement {
 }
 ```
 
+## GitHub Actions (CI/CD)
+
+The project includes a GitHub Actions workflow that automatically publishes to Maven Central when a tag is pushed.
+
+### Required GitHub Secrets
+
+Configure the following secrets in your GitHub repository (Settings > Secrets and variables > Actions):
+
+| Secret Name | Description |
+|-------------|-------------|
+| `MAVEN_CENTRAL_USERNAME` | Maven Central Portal user token username |
+| `MAVEN_CENTRAL_PASSWORD` | Maven Central Portal user token password |
+| `SIGNING_IN_MEMORY_KEY` | Full PGP private key (ASCII-armored) |
+| `SIGNING_IN_MEMORY_KEY_PASSWORD` | PGP key passphrase |
+
+### Publishing via Tag
+
+1. Update `VERSION_NAME` in `gradle.properties`:
+   ```properties
+   VERSION_NAME=1.0.0
+   ```
+
+2. Commit and push the version change:
+   ```bash
+   git add gradle.properties
+   git commit -m "Bump version to 1.0.0"
+   git push
+   ```
+
+3. Create and push a tag (must match VERSION_NAME):
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+4. The workflow will:
+   - Validate that tag version matches `gradle.properties`
+   - Build and test the project
+   - Publish to Maven Central
+   - Create a GitHub Release with release notes
+
+### Exporting GPG Key for GitHub Secrets
+
+```bash
+# Export your private key
+gpg --export-secret-keys --armor KEY_ID
+
+# Copy the entire output (including BEGIN/END markers) to SIGNING_IN_MEMORY_KEY secret
+```
+
+**Note**: When pasting the key into GitHub Secrets, keep the newlines intact. GitHub Secrets preserve multi-line values.
+
 ## References
 
 - [Sonatype Central Portal](https://central.sonatype.com/)
