@@ -45,9 +45,9 @@ internal fun Project.configureNativePush() {
     tasks.register("pushSo") {
         val rmSo = tasks.getByName("rmSo")
         subprojects.find { it.name == "main_android_sdk" }?.let {
-            val buildLibrariesForTest = it.tasks.getByName("buildLibrariesForTest")
-            rmSo.dependsOn(buildLibrariesForTest)
-            dependsOn(buildLibrariesForTest)
+            val buildLibrariesForMain = it.tasks.getByName("buildLibrariesForMain")
+            rmSo.dependsOn(buildLibrariesForMain)
+            dependsOn(buildLibrariesForMain)
         }
         dependsOn(rmSo)
 
