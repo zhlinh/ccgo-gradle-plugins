@@ -41,7 +41,33 @@ class ProjectConfig(val project: Project) {
     val javaCompatibilityVersion = JavaVersion.VERSION_11
     val gradlePluginJavaCompatibilityVersion = JavaVersion.VERSION_17
     val versionName: String = project.libs.findVersion("commMainProject").get().toString()
-    val isRelease: Boolean = project.libs.findVersion("commIsRelease").get().toString().toBoolean()
+
+    /**
+     * Determines if this is a release build.
+     * Priority (high to low):
+     * 1. Gradle property: -PisRelease=true
+     * 2. Environment variable: CCGO_CI_BUILD_IS_RELEASE=true
+     * 3. Default: false (beta/debug build)
+     */
+    val isRelease: Boolean = run {
+        // 1. Check Gradle property first (highest priority)
+        val gradleProp = project.findProperty("isRelease")?.toString()
+        if (gradleProp != null) {
+            println("[Config] isRelease from Gradle property (-PisRelease): $gradleProp")
+            return@run gradleProp.toBoolean()
+        }
+
+        // 2. Check environment variable
+        val envVar = System.getenv("CCGO_CI_BUILD_IS_RELEASE")
+        if (envVar != null) {
+            println("[Config] isRelease from environment variable (CCGO_CI_BUILD_IS_RELEASE): $envVar")
+            return@run envVar.toBoolean()
+        }
+
+        // 3. Default to false (beta/debug build)
+        println("[Config] isRelease defaults to false (use -PisRelease=true or buildAARRelease for release)")
+        false
+    }
     val commGroupId: String = project.libs.findVersion("commGroupId").get().toString()
     val commPublishChannelDesc: String = project.libs.findVersion("commPublishChannelDesc").get().toString()
         .takeUnless { it == "EMPTY" }
@@ -63,6 +89,8 @@ class ProjectConfig(val project: Project) {
     val timeInfo: String by lazy { getGitHeadTimeInfo() }
     val publishSuffix: String by lazy { getPublishSuffix(isRelease) }
     val currentTag: String = getCurrentTag(isRelease, versionName, publishSuffix)
+    // Target subdirectory: "release" for release builds, "debug" for debug/beta builds
+    val targetSubDir: String = if (isRelease) "release" else "debug"
     val projectName: String = project.rootProject.name
     val projectNameUppercase: String = projectName.uppercase()
     val projectNameLowercase: String = projectName.lowercase()

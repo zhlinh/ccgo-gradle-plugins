@@ -25,7 +25,6 @@ import org.gradle.kotlin.dsl.register
 
 
 const val projectNameMain: String = "Main"
-const val projectNameTest: String = "Test"
 
 /**
  * Configures the root project for native builds.
@@ -41,7 +40,6 @@ internal fun Project.configureRootNativeBuild() {
  */
 internal fun Project.configureSubNativeBuildPython() {
     createBuildLibrariesTask(projectNameMain)
-    createBuildLibrariesTask(projectNameTest)
     extensions.configure<LibraryExtension> {
         configureSubNativeBuildBase(this)
     }
@@ -126,12 +124,6 @@ internal fun Project.createBuildLibrariesTask(inputProjectName: String) {
         val ndkDir = getLocalProperties("ndk.dir", System.getenv("NDK_ROOT"))
         val cmakeDir = getLocalProperties("cmake.dir", System.getenv("CMAKE_HOME"))
         var cmakeAbiFilters = cfgs.cmakeAbiFiltersAsList
-        if (projectNameTest == inputProjectName) {
-            var abiProperty = getLocalProperties("comm.load.abi", "arm64-v8a")
-            if (abiProperty.isNotEmpty()) {
-                cmakeAbiFilters = abiProperty.split(",")
-            }
-        }
         // to get the path
         var path = System.getenv("PATH")
         if (path == null || path.isEmpty()) {

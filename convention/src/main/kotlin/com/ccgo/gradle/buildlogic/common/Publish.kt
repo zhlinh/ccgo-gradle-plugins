@@ -43,8 +43,6 @@ private const val REPO_NAME_CUSTOM = "MavenCustom"
 // Publication names
 // Release: ./gradlew publishAllPublicationsToMavenLocalRepository --no-daemon
 private const val RELEASE_PUBLICATION_NAME = "release"
-// Test:    ./gradlew publishTestPublicationToMavenLocalRepository --no-daemon
-private const val TEST_PUBLICATION_NAME = "test"
 // Maven Central (nmcp): ./gradlew publishAllPublicationsToCentralPortal --no-daemon
 private const val MAVEN_PUBLICATION_NAME = "maven"
 
@@ -296,12 +294,9 @@ private fun Project.configureCustomMaven() {
         publications {
             val publishConfig = mutableMapOf(
                 // release always use release build
-                RELEASE_PUBLICATION_NAME to "target/${cfgs.getMainArchiveAarName("release")}",
+                // AAR is now in target/{debug|release}/android/ directory after ccgo build refactor
+                RELEASE_PUBLICATION_NAME to "target/${cfgs.targetSubDir}/android/${cfgs.getMainArchiveAarName("release")}",
             )
-            if (!cfgs.isRelease) {
-                // if not release, add test publication
-                publishConfig[TEST_PUBLICATION_NAME] = "target/${cfgs.mainProjectArchiveAarName}"
-            }
             (publications.getByName(MAVEN_PUBLICATION_NAME) as? MavenPublication)?.apply {
                 configurePublication(this, MAVEN_PUBLICATION_NAME,
                     publishConfig[RELEASE_PUBLICATION_NAME]!!, false)
@@ -347,12 +342,20 @@ private fun Project.registerPublishTaskAliases() {
         }
         val artifactPath = "$expandedLocalPath/${groupId.replace('.', '/')}/$artifactId/$versionName"
 
+        // Find buildAAR task to add as dependency for publish tasks
+        // This ensures AAR is built before publishing
+        val buildAARTask = rootProject.tasks.findByName("buildAAR")
+
         // Register alias task for Maven Local (if not exists)
         val localTask = tasks.findByName("publishAllPublicationsTo${REPO_NAME_LOCAL}Repository")
         if (localTask != null && tasks.findByName("publishTo${REPO_NAME_LOCAL}") == null) {
             tasks.register("publishTo${REPO_NAME_LOCAL}") {
                 group = "publishing"
                 description = "Publishes all publications to the local Maven repository"
+                // Depend on buildAAR to ensure AAR exists before publishing
+                if (buildAARTask != null) {
+                    dependsOn(buildAARTask)
+                }
                 dependsOn(localTask)
             }
         }
@@ -363,6 +366,10 @@ private fun Project.registerPublishTaskAliases() {
             tasks.register("publishToMavenCentral") {
                 group = "publishing"
                 description = "Publishes all publications to Maven Central via Central Portal"
+                // Depend on buildAAR to ensure AAR exists before publishing
+                if (buildAARTask != null) {
+                    dependsOn(buildAARTask)
+                }
                 dependsOn(centralPortalTask)
             }
         }
@@ -380,6 +387,10 @@ private fun Project.registerPublishTaskAliases() {
             tasks.register("publishTo${REPO_NAME_CUSTOM}") {
                 group = "publishing"
                 description = "Publishes all publications to all custom Maven repositories"
+                // Depend on buildAAR to ensure AAR exists before publishing
+                if (buildAARTask != null) {
+                    dependsOn(buildAARTask)
+                }
                 dependsOn(customTasks)
             }
         }
@@ -462,11 +473,7 @@ private fun Project.configurePublication(
         if (addFromComponent) {
             groupId = cfgs.commGroupId
             artifactId = getProjectArtifactId()
-            if (publishName != TEST_PUBLICATION_NAME) {
-                version = cfgs.versionName
-            } else {
-                version = "${cfgs.versionName}-TEST"
-            }
+            version = cfgs.versionName
             from(components["java"])
         }
         val arts = artifacts.filter {

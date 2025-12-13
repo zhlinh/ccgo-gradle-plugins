@@ -16,6 +16,7 @@ import com.ccgo.gradle.buildlogic.common.utils.execCommand
 import org.gradle.api.Project
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.Delete
+import org.gradle.api.tasks.Exec
 import org.gradle.kotlin.dsl.register
 
 /**
@@ -34,17 +35,17 @@ internal fun Project.configureRootArchive() {
         }
     }
 
-    // Task to clean the target/android directory
+    // Task to clean the target/{debug|release}/android directory
     val cleanTheTargetDir = tasks.register("cleanTheTargetDir", Delete::class) {
         println("[${project.displayName}] configure rootProject clean...")
         doFirst {
             println("[${project.displayName}] execute rootProject clean...")
         }
-        // Only clean target/android/ to preserve other platform artifacts
-        delete("${rootDir.parentFile}/target/android/")
+        // Only clean target/{debug|release}/android/ to preserve other platform artifacts
+        delete("${rootDir.parentFile}/target/${cfgs.targetSubDir}/android/")
     }
 
-    // Task to copy the AAR file to target/android/
+    // Task to copy the AAR file to target/{debug|release}/android/
     val copyProjectAAR = tasks.register("copyProjectAAR", Copy::class) {
         val mainAndroidSdk = cfgs.mainCommProject
         val chosenProject = mainAndroidSdk.name
@@ -54,8 +55,8 @@ internal fun Project.configureRootArchive() {
             println("[${project.displayName}] execute rootProject [${cfgs.projectNameUppercase}] copyProjectAAR...")
             println("[${project.displayName}] get mainProjectName [${chosenProject}], path [${androidProjectPath}]...")
         }
-        // Copy AAR directly to target/android/ (Python will move to haars/ in unified archive)
-        copyAARFileOnly(mainAndroidSdk, "${rootDir.parentFile}/target/android/")
+        // Copy AAR directly to target/{debug|release}/android/ (Python will move to haars/ in unified archive)
+        copyAARFileOnly(mainAndroidSdk, "${rootDir.parentFile}/target/${cfgs.targetSubDir}/android/")
     }
 
     // Task to build AAR (renamed from archiveProject)
@@ -66,11 +67,45 @@ internal fun Project.configureRootArchive() {
             println("[${project.displayName}] execute rootProject [${cfgs.projectNameUppercase}] buildAAR...")
         }
         doLast {
-            val targetAndroidDir = "${rootDir.parentFile}/target/android"
+            val targetAndroidDir = "${rootDir.parentFile}/target/${cfgs.targetSubDir}/android"
             println("===================${cfgs.projectNameUppercase} Android AAR Build Complete===================")
             val result = execCommand("ls $targetAndroidDir/")
             println(result.trim())
             println("Note: Use Python's archive_android_project() to create unified ZIP archive")
+        }
+    }
+
+    // Task to build Release AAR (invokes Gradle with -PisRelease=true)
+    // Usage: ./gradlew buildAARRelease
+    tasks.register("buildAARRelease", Exec::class) {
+        group = "build"
+        description = "Build AAR with release configuration"
+        workingDir = rootDir
+        val gradlewPath = if (System.getProperty("os.name").lowercase().contains("windows")) {
+            "gradlew.bat"
+        } else {
+            "./gradlew"
+        }
+        commandLine(gradlewPath, "buildAAR", "-PisRelease=true", "--no-daemon")
+        doFirst {
+            println("[${project.displayName}] Building Release AAR...")
+        }
+    }
+
+    // Task to build Debug/Beta AAR (invokes Gradle with -PisRelease=false)
+    // Usage: ./gradlew buildAARDebug
+    tasks.register("buildAARDebug", Exec::class) {
+        group = "build"
+        description = "Build AAR with debug/beta configuration"
+        workingDir = rootDir
+        val gradlewPath = if (System.getProperty("os.name").lowercase().contains("windows")) {
+            "gradlew.bat"
+        } else {
+            "./gradlew"
+        }
+        commandLine(gradlewPath, "buildAAR", "-PisRelease=false", "--no-daemon")
+        doFirst {
+            println("[${project.displayName}] Building Debug/Beta AAR...")
         }
     }
 
