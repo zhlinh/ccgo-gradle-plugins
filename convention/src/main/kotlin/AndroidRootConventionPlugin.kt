@@ -28,8 +28,11 @@ class AndroidRootConventionPlugin : Plugin<Project> {
             with(pluginManager) {
                 apply("org.jetbrains.kotlin.jvm")
                 apply("com.mojeter.ccgo.gradle.android.lint")
-                apply("com.vanniktech.maven.publish")
+                apply("maven-publish")
                 apply("signing")
+                // Apply nmcp plugins for Maven Central publishing
+                apply("com.gradleup.nmcp")
+                apply("com.gradleup.nmcp.aggregation")
                 // apply build_config.gradle.kts
                 val buildConfigFile = "${rootDir.parentFile}/build_config.gradle.kts"
                 if (File(buildConfigFile).exists()) {

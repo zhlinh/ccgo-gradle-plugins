@@ -47,7 +47,7 @@ dependencies {
     compileOnly(libs.kotlin.gradlePlugin)
     compileOnly(libs.ksp.gradlePlugin)
     compileOnly(libs.room.gradlePlugin)
-    compileOnly(libs.nmcp.gradlePlugin)  // Needed for Publish.kt compilation
+    implementation(libs.nmcp.gradlePlugin)  // Needed for Maven Central publishing via nmcp
     implementation(libs.truth)
     implementation(libs.tomlj)  // For parsing CCGO.toml configuration
 }

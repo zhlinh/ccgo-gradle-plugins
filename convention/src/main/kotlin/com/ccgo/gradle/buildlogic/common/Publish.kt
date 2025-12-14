@@ -31,6 +31,7 @@ import org.gradle.kotlin.dsl.get
 import org.gradle.kotlin.dsl.register
 import org.gradle.kotlin.dsl.withType
 import org.gradle.plugins.signing.SigningExtension
+import nmcp.NmcpAggregationExtension
 
 private const val DEFAULT_CENTRAL_DOMAIN = "central.sonatype.com"
 
@@ -43,8 +44,6 @@ private const val REPO_NAME_CUSTOM = "MavenCustom"
 // Publication names
 // Release: ./gradlew publishAllPublicationsToMavenLocalRepository --no-daemon
 private const val RELEASE_PUBLICATION_NAME = "release"
-// Maven Central (nmcp): ./gradlew publishAllPublicationsToCentralPortal --no-daemon
-private const val MAVEN_PUBLICATION_NAME = "maven"
 
 /**
  * Configures the publishing for the project.
@@ -75,9 +74,9 @@ internal fun Project.configurePublish() {
         configureSourcesAndJavaDoc()
         setSystemEnv()
         configureMaven()
-        if (cfgs.commIsSignEnabled) {
-            configureSign()
-        }
+        // Signing is automatically configured based on available credentials
+        // (same as ccgo-gradle-plugins behavior)
+        configureSign()
     }
 }
 
@@ -121,47 +120,70 @@ private fun preparePgpKey(key: String): String? {
 
 /**
  * Configures the signing for the project.
+ * Automatically detects signing credentials:
+ * 1. In-memory PGP key (SIGNING_IN_MEMORY_KEY env or signingInMemoryKey property)
+ * 2. GPG agent (local gpg command with secret keys)
+ * 3. No signing (for local publishing)
  */
 private fun Project.configureSign() {
     var signingConfigured = false
 
+    // Check for in-memory signing keys
+    val rawSigningKey = getSigningInMemoryKey()
+    val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
+    val hasSigningKeys = rawSigningKey.isNotEmpty() && signingPassword.isNotEmpty()
+
+    // Check if gpg-agent is available with secret keys (for local development)
+    val hasGpgAgent = try {
+        val process = Runtime.getRuntime().exec(arrayOf("gpg", "--list-secret-keys"))
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor() == 0 && output.contains("sec")
+    } catch (e: Exception) {
+        false
+    }
+
     extensions.configure<SigningExtension> {
         isRequired = false
 
-        sign {
-            val publishing = project.extensions.getByName("publishing") as PublishingExtension
-            val rawSigningKey = getSigningInMemoryKey()
-            if (rawSigningKey.isEmpty()) {
-                println("[Signing] WARNING: Signing key is empty, skip sign publication")
-                return@sign
-            }
+        when {
+            hasSigningKeys -> {
+                println("[Signing] Configuring with in-memory PGP key (raw length: ${rawSigningKey.length})")
+                val preparedKey = preparePgpKey(rawSigningKey)
 
-            println("[Signing] Configuring with in-memory PGP key (raw length: ${rawSigningKey.length})")
-            val preparedKey = preparePgpKey(rawSigningKey)
-
-            if (preparedKey != null) {
-                try {
-                    val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
-                    useInMemoryPgpKeys(preparedKey, signingPassword)
-                    println("[Signing] In-memory PGP key configured successfully (${preparedKey.lines().size} lines)")
-                    signingConfigured = true
-
-                    publishing.publications.asMap.filter { it.key == RELEASE_PUBLICATION_NAME }.forEach { (_, publication) ->
-                        println("[Signing] Signing publication: ${publication.name}")
-                        sign(publication as MavenPublication)
+                if (preparedKey != null) {
+                    try {
+                        useInMemoryPgpKeys(preparedKey, signingPassword)
+                        println("[Signing] In-memory PGP key configured successfully (${preparedKey.lines().size} lines)")
+                        signingConfigured = true
+                        // Sign release publication
+                        val publishing = project.extensions.getByName("publishing") as PublishingExtension
+                        publishing.publications.asMap.filter { it.key == RELEASE_PUBLICATION_NAME }.forEach { (_, publication) ->
+                            println("[Signing] Signing publication: ${publication.name}")
+                            sign(publication as MavenPublication)
+                        }
+                    } catch (e: Exception) {
+                        println("[Signing] ERROR: Failed to configure PGP key: ${e.message}")
+                        signingConfigured = false
                     }
-                } catch (e: Exception) {
-                    println("[Signing] ERROR: Failed to configure PGP key: ${e.message}")
-                    println("[Signing] Please verify your signing key and password are correct")
+                } else {
+                    println("[Signing] ERROR: Signing key validation failed.")
                     signingConfigured = false
                 }
-            } else {
-                println("[Signing] ERROR: Signing key validation failed. Signing will be disabled.")
-                println("[Signing] To fix this, ensure your signingInMemoryKey:")
-                println("[Signing]   1. Starts with '-----BEGIN PGP PRIVATE KEY BLOCK-----'")
-                println("[Signing]   2. Ends with '-----END PGP PRIVATE KEY BLOCK-----'")
-                println("[Signing]   3. Contains the full key content with proper line breaks")
-                println("[Signing]   4. If using environment variable, ensure newlines are preserved")
+            }
+            hasGpgAgent -> {
+                println("[Signing] Configured with GPG command-line tool")
+                useGpgCmd()
+                signingConfigured = true
+                // Sign release publication
+                val publishing = project.extensions.getByName("publishing") as PublishingExtension
+                publishing.publications.asMap.filter { it.key == RELEASE_PUBLICATION_NAME }.forEach { (_, publication) ->
+                    println("[Signing] Signing publication: ${publication.name}")
+                    sign(publication as MavenPublication)
+                }
+            }
+            else -> {
+                println("[Signing] WARNING: No signing credentials configured. Artifacts will not be signed.")
+                println("[Signing] For Maven Central publishing, configure signing credentials")
                 signingConfigured = false
             }
         }
@@ -173,7 +195,6 @@ private fun Project.configureSign() {
             allTasks.filter { it.name.startsWith("sign") }.forEach {
                 it.enabled = false
             }
-            println("[Publish] Signing tasks disabled (signing not properly configured)")
         }
     }
 }
@@ -194,16 +215,25 @@ private fun Project.configureMaven() {
 }
 
 private fun Project.configureCentralMaven() {
-    // nmcp plugin configuration is done in the project's build.gradle.kts
-    // since it uses the aggregation plugin pattern.
-    // This function now just sets up the publication with POM information.
-
-    // Get credentials for logging purposes
+    // Configure nmcp aggregation plugin for Maven Central publishing
     val username = ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_USERNAME)
-    val hasCredentials = username.isNotEmpty()
+    val password = ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_PASSWORD)
+    val hasCredentials = username.isNotEmpty() && password.isNotEmpty()
 
     if (hasCredentials) {
         println("[Publish] Maven Central credentials configured")
+        // Configure nmcpAggregation extension
+        extensions.configure<NmcpAggregationExtension> {
+            centralPortal {
+                this.username.set(ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_USERNAME))
+                this.password.set(ConfigProvider.get(project, ConfigKey.MAVEN_CENTRAL_PASSWORD))
+                // AUTOMATIC: auto-release after upload, USER_MANAGED: manual release from portal
+                this.publishingType.set("AUTOMATIC")
+            }
+        }
+        // Add this project to nmcp aggregation for Maven Central publishing
+        dependencies.add("nmcpAggregation", project)
+        println("[Publish] Command: ./gradlew ccgoPublishToMavenCentral")
     } else {
         println("[Publish] WARNING: Maven Central credentials not found")
         println("[Publish] Set MAVEN_CENTRAL_USERNAME and MAVEN_CENTRAL_PASSWORD environment variables")
@@ -298,14 +328,6 @@ private fun Project.configureCustomMaven() {
                 // since publish depends on buildAARRelease which copies to project root's target/
                 RELEASE_PUBLICATION_NAME to "../target/release/android/${cfgs.getMainArchiveAarName("release")}",
             )
-            // Note: The "maven" publication is created by vanniktech.maven.publish plugin
-            // We need to set groupId/artifactId/version to avoid "groupId cannot be empty" error
-            // when the maven publication task runs (even though we primarily use the release publication)
-            (publications.findByName(MAVEN_PUBLICATION_NAME) as? MavenPublication)?.apply {
-                groupId = cfgs.commGroupId
-                artifactId = getProjectArtifactId()
-                version = cfgs.versionName
-            }
 
             for ((publishName, artifactName) in publishConfig) {
                 register(publishName, MavenPublication::class) {
