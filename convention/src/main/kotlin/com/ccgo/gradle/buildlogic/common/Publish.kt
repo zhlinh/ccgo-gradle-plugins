@@ -569,14 +569,23 @@ private fun Project.configurePom(config: MavenPom,
             if (commDependencies.isEmpty()) {
                 return@withXml
             }
-            val dependenciesNode = asNode().appendNode("dependencies")
+            // Find existing dependencies node or create new one
+            val rootNode = asNode()
+            @Suppress("UNCHECKED_CAST")
+            val existingDeps = rootNode.children().find {
+                (it as? groovy.util.Node)?.name()?.toString()?.endsWith("dependencies") == true
+            } as? groovy.util.Node
+            val dependenciesNode = existingDeps ?: rootNode.appendNode("dependencies")
+
             for (dependency in commDependencies) {
-                val dependencyNode = dependenciesNode.appendNode("dependency")
                 val parts = dependency.split(":")
-                println("add dependency: $parts")
-                dependencyNode.appendNode("groupId", parts[0])
-                dependencyNode.appendNode("artifactId", parts[1])
-                dependencyNode.appendNode("version", parts[2])
+                if (parts.size >= 3) {
+                    println("add dependency: $parts")
+                    val dependencyNode = dependenciesNode.appendNode("dependency")
+                    dependencyNode.appendNode("groupId", parts[0])
+                    dependencyNode.appendNode("artifactId", parts[1])
+                    dependencyNode.appendNode("version", parts[2])
+                }
             }  // dependencies
         }  // withXml
     }  // MavenPom
@@ -685,11 +694,19 @@ private fun Project.setSystemEnv() {
 }
 
 private fun Project.getProjectArtifactId(): String {
+    // Priority: -PartifactId command line > CCGO.toml artifact_id > project name
+    val cmdLineArtifactId = project.findProperty("artifactId")?.toString()
+    val baseArtifactId = if (!cmdLineArtifactId.isNullOrBlank()) {
+        println("[Publish] Using artifact ID from command line: $cmdLineArtifactId")
+        cmdLineArtifactId.lowercase()
+    } else {
+        cfgs.mavenArtifactId.lowercase()
+    }
     val combinedSuffix = arrayOf(cfgs.commPublishChannelDesc.lowercase(), cfgs.androidStlSuffix.lowercase())
         .filter { it.isNotEmpty() }
         .joinToString("-") {
             it.removePrefix("-")
         }
     val appendChar = if (combinedSuffix.isNotEmpty()) "-" else ""
-    return "${cfgs.projectNameLowercase}${appendChar}${combinedSuffix}"
+    return "${baseArtifactId}${appendChar}${combinedSuffix}"
 }

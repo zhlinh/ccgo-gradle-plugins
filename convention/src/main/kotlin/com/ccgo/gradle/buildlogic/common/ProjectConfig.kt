@@ -24,6 +24,9 @@ import org.gradle.kotlin.dsl.extra
 
 /**
  * Project config
+ *
+ * Configuration is read from CCGO.toml with fallback to libs.versions.toml for backward compatibility.
+ * Priority: CCGO.toml > libs.versions.toml
  */
 class ProjectConfig(val project: Project) {
     companion object {
@@ -36,11 +39,20 @@ class ProjectConfig(val project: Project) {
         }
     }
 
+    // CCGO.toml configuration reader
+    private val ccgoConfig: CCGOConfig = CCGOConfig.getDefault(project)
+
     val mainCommProject
         get(): Project = project.rootProject.subprojects.find { it.name.startsWith("main") && !it.name.startsWith("empty") }!!
     val javaCompatibilityVersion = JavaVersion.VERSION_11
     val gradlePluginJavaCompatibilityVersion = JavaVersion.VERSION_17
-    val versionName: String = project.libs.findVersion("commMainProject").get().toString()
+
+    // Read from CCGO.toml [project].version, fallback to libs.versions.toml
+    val versionName: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.version
+    } else {
+        project.libs.findVersion("commMainProject").get().toString()
+    }
 
     /**
      * Determines if this is a release build.
@@ -68,21 +80,55 @@ class ProjectConfig(val project: Project) {
         println("[Config] isRelease defaults to false (use -PisRelease=true or buildAARRelease for release)")
         false
     }
-    val commGroupId: String = project.libs.findVersion("commGroupId").get().toString()
-    val commPublishChannelDesc: String = project.libs.findVersion("commPublishChannelDesc").get().toString()
-        .takeUnless { it == "EMPTY" }
-        ?: ""
-    val commAndroidStl: String = project.libs.findVersion("commAndroidStl").get().toString()
+
+    // Read from CCGO.toml [project].group_id, fallback to libs.versions.toml
+    val commGroupId: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.groupId
+    } else {
+        project.libs.findVersion("commGroupId").get().toString()
+    }
+
+    // Read from CCGO.toml [publish.maven].channel_desc, fallback to libs.versions.toml
+    val commPublishChannelDesc: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.publishChannelDesc
+    } else {
+        project.libs.findVersion("commPublishChannelDesc").get().toString()
+            .takeUnless { it == "EMPTY" }
+            ?: ""
+    }
+
+    // Read from CCGO.toml [publish.maven].artifact_id, defaults to project name
+    val mavenArtifactId: String = if (ccgoConfig.isLoaded && ccgoConfig.artifactId.isNotBlank()) {
+        ccgoConfig.artifactId
+    } else {
+        project.rootProject.name
+    }
+
+    // Read from CCGO.toml [android].stl, fallback to libs.versions.toml
+    val commAndroidStl: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.androidStl
+    } else {
+        project.libs.findVersion("commAndroidStl").get().toString()
+    }
     private val commAndroidStlIsStatic: Boolean = commAndroidStl.endsWith("_static")
     val androidStlSuffix = if (commAndroidStlIsStatic) "-stdembed" else ""
-    val commDependencies: String =
+
+    // Read from CCGO.toml [publish.maven].dependencies, fallback to libs.versions.toml
+    val commDependencies: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.mavenDependenciesAsString
+    } else {
         project.libs.findVersion("commDependencies").get().toString().replace("\\s".toRegex(), "")
+    }
     // remove blanks
-    val commDependenciesAsList: List<String> = commDependencies.split(",")
+    val commDependenciesAsList: List<String> = if (ccgoConfig.isLoaded) {
+        ccgoConfig.mavenDependencies
+    } else {
+        commDependencies.split(",")
             .filter {
                 it.isNotBlank() && it != "EMPTY" && it.contains(":")
             }
-    val commIsSignEnabled: Boolean = project.libs.findVersion("commIsSignEnabled").get().toString().toBoolean()
+    }
+    // commIsSignEnabled removed - signing is now auto-detected based on available credentials
     val versionCode: String by lazy { getGitVersionCode() }
     val revision: String by lazy { getGitRevision() }
     val branchName: String by lazy { getGitBranchName() }
@@ -110,21 +156,66 @@ class ProjectConfig(val project: Project) {
     val mainProjectAssembleAllTaskName = "assembleRelease"
     val mainProjectMergeJniTaskName = "mergeReleaseJniLibFolders"
 
-    val compileSdkVersion: Int = project.libs.findVersion("compileSdkVersion").get().toString().toInt()
-    val buildToolsVersion: String = project.libs.findVersion("buildToolsVersion").get().toString()
-    val minSdkVersion: Int = project.libs.findVersion("minSdkVersion").get().toString().toInt()
-    val appMinSdkVersion: Int = project.libs.findVersion("appMinSdkVersion").get().toString().toInt()
-    val targetSdkVersion: Int = project.libs.findVersion("targetSdkVersion").get().toString().toInt()
+    // Read from CCGO.toml [android].compile_sdk, fallback to libs.versions.toml
+    val compileSdkVersion: Int = if (ccgoConfig.isLoaded) {
+        ccgoConfig.compileSdk
+    } else {
+        project.libs.findVersion("compileSdkVersion").get().toString().toInt()
+    }
 
-    // remove blanks
-    val cmakeAbiFilters: String =
+    // Read from CCGO.toml [android].build_tools, fallback to libs.versions.toml
+    val buildToolsVersion: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.buildTools
+    } else {
+        project.libs.findVersion("buildToolsVersion").get().toString()
+    }
+
+    // Read from CCGO.toml [android].min_sdk, fallback to libs.versions.toml
+    val minSdkVersion: Int = if (ccgoConfig.isLoaded) {
+        ccgoConfig.minSdk
+    } else {
+        project.libs.findVersion("minSdkVersion").get().toString().toInt()
+    }
+
+    // Read from CCGO.toml [android].app_min_sdk, fallback to libs.versions.toml
+    val appMinSdkVersion: Int = if (ccgoConfig.isLoaded) {
+        ccgoConfig.appMinSdk
+    } else {
+        project.libs.findVersion("appMinSdkVersion").get().toString().toInt()
+    }
+
+    // Read from CCGO.toml [android].target_sdk, fallback to libs.versions.toml
+    val targetSdkVersion: Int = if (ccgoConfig.isLoaded) {
+        ccgoConfig.targetSdk
+    } else {
+        project.libs.findVersion("targetSdkVersion").get().toString().toInt()
+    }
+
+    // Read from CCGO.toml [android].default_archs, fallback to libs.versions.toml
+    val cmakeAbiFilters: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.cmakeAbiFiltersAsString
+    } else {
         project.libs.findVersion("cmakeAbiFilters").get().toString().replace("\\s".toRegex(), "")
-    val cmakeAbiFiltersAsList: List<String> = cmakeAbiFilters.split(",")
-            .filter { it.isNotBlank() && it != "EMPTY" }
-    val cmakeVersion: String = project.libs.findVersion("cmakeVersion").get().toString()
+    }
+    val cmakeAbiFiltersAsList: List<String> = if (ccgoConfig.isLoaded) {
+        ccgoConfig.cmakeAbiFilters
+    } else {
+        cmakeAbiFilters.split(",").filter { it.isNotBlank() && it != "EMPTY" }
+    }
 
-    //  ndkVersion is r25c
-    val ndkVersion: String = project.libs.findVersion("ndkVersion").get().toString()
+    // Read from CCGO.toml [build].cmake_version, fallback to libs.versions.toml
+    val cmakeVersion: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.cmakeVersion
+    } else {
+        project.libs.findVersion("cmakeVersion").get().toString()
+    }
+
+    // Read from CCGO.toml [android].ndk_version, fallback to libs.versions.toml
+    val ndkVersion: String = if (ccgoConfig.isLoaded) {
+        ccgoConfig.ndkVersion
+    } else {
+        project.libs.findVersion("ndkVersion").get().toString()
+    }
     val ndkPath: String = System.getenv("NDK_ROOT") ?: ""
     val taskPrintPrefixFilters = listOf("assemble", "bundle", "publish", "merge")
 
@@ -139,7 +230,9 @@ class ProjectConfig(val project: Project) {
     }
 
     fun print() {
+        val configSource = if (ccgoConfig.isLoaded) "CCGO.toml" else "libs.versions.toml"
         println("===============CCGO Build System=================")
+        println("Config source: $configSource")
         println("TASKS (which can be executed by './gradlew :taskName')")
         println(":archiveProject                           - Archive the project")
         println(":publishMainPublicationToMavenRepository  - Publish Release only to maven, set config in local.properties first")
@@ -151,6 +244,7 @@ class ProjectConfig(val project: Project) {
         println(":printModulePaths                         - Print all the module paths")
         println("===========================================")
         println("$projectName versionName:${versionName}")
+        println("$projectName groupId:${commGroupId}")
         println("$projectName versionCode:${versionCode}")
         println("$projectName revision:${revision}")
         println("$projectName branchName:${branchName}")
