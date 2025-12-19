@@ -234,6 +234,94 @@ class CCGOConfig(private val project: Project) {
         mavenDependencies.joinToString(",")
     }
 
+    // =========================================================================
+    // KMP (Kotlin Multiplatform) Configuration
+    // =========================================================================
+
+    /**
+     * KMP group ID for Maven publishing
+     * Read from [publish.kmp].group_id in CCGO.toml
+     * Falls back to [publish.android.maven].group_id or [project].group_id
+     */
+    val kmpGroupId: String by lazy {
+        tomlResult?.getString("publish.kmp.group_id")
+            ?: tomlResult?.getString("publish.android.maven.group_id")
+            ?: tomlResult?.getString("project.group_id")
+            ?: groupId
+    }
+
+    /**
+     * KMP artifact ID for publishing
+     * Read from [publish.kmp].artifact_id in CCGO.toml
+     * Defaults to project name + "-kmp" if not specified
+     */
+    val kmpArtifactId: String by lazy {
+        tomlResult?.getString("publish.kmp.artifact_id")
+            ?.takeIf { it.isNotBlank() }
+            ?: "${projectName}-kmp"
+    }
+
+    /**
+     * Data class representing a KMP dependency
+     */
+    data class KmpDependency(
+        val group: String,
+        val artifact: String,
+        val version: String
+    ) {
+        fun toMavenCoordinate(): String = "$group:$artifact:$version"
+    }
+
+    /**
+     * KMP dependencies for commonMain sourceSet
+     * Read from [publish.kmp].dependencies in CCGO.toml
+     * Each dependency should have group, artifact, and version fields
+     */
+    val kmpDependencies: List<KmpDependency> by lazy {
+        tomlResult?.getArray("publish.kmp.dependencies")
+            ?.toList()
+            ?.mapNotNull { item ->
+                val table = item as? org.tomlj.TomlTable ?: return@mapNotNull null
+                val group = table.getString("group") ?: return@mapNotNull null
+                val artifact = table.getString("artifact") ?: return@mapNotNull null
+                val version = table.getString("version") ?: return@mapNotNull null
+                KmpDependency(group, artifact, version)
+            }
+            ?: emptyList()
+    }
+
+    /**
+     * KMP dependencies as Maven coordinates list
+     */
+    val kmpDependenciesAsList: List<String> by lazy {
+        kmpDependencies.map { it.toMavenCoordinate() }
+    }
+
+    /**
+     * KMP Android minSdk (can be different from native Android lib)
+     * Read from [publish.kmp].android_min_sdk in CCGO.toml
+     * Falls back to [android].min_sdk
+     */
+    val kmpAndroidMinSdk: Int by lazy {
+        tomlResult?.getLong("publish.kmp.android_min_sdk")?.toInt() ?: minSdk.coerceAtLeast(24)
+    }
+
+    /**
+     * KMP iOS deployment target
+     * Read from [publish.kmp].ios_deployment_target in CCGO.toml
+     */
+    val kmpIosDeploymentTarget: String by lazy {
+        tomlResult?.getString("publish.kmp.ios_deployment_target") ?: "14.0"
+    }
+
+    /**
+     * Git repository URL
+     * Read from [project].repository in CCGO.toml
+     */
+    val repositoryUrl: String by lazy {
+        tomlResult?.getString("project.repository") ?: ""
+    }
+
     /**
      * Check if CCGO.toml was found and loaded successfully
      */
@@ -247,10 +335,17 @@ class CCGOConfig(private val project: Project) {
         println("===================CCGO Config===================")
         println("CCGO.toml loaded: $isLoaded")
         println("version: $version")
+        println("projectName: $projectName")
         println("groupId: $groupId")
         println("androidStl: $androidStl")
         println("publishChannelDesc: $publishChannelDesc")
         println("mavenDependencies: $mavenDependencies")
+        println("--- KMP Config ---")
+        println("kmpGroupId: $kmpGroupId")
+        println("kmpArtifactId: $kmpArtifactId")
+        println("kmpDependencies: $kmpDependenciesAsList")
+        println("kmpAndroidMinSdk: $kmpAndroidMinSdk")
+        println("kmpIosDeploymentTarget: $kmpIosDeploymentTarget")
         println("=================================================")
     }
 }

@@ -129,6 +129,22 @@ gradlePlugin {
             id = "com.mojeter.ccgo.gradle.android.publish"
             implementationClass = "AndroidPublishConventionPlugin"
         }
+        register("kmpPublish") {
+            id = "com.mojeter.ccgo.gradle.kmp.publish"
+            implementationClass = "KmpPublishConventionPlugin"
+        }
+        register("kmpLibraryNativePython") {
+            id = "com.mojeter.ccgo.gradle.kmp.library.native.python"
+            implementationClass = "KmpLibraryNativePythonConventionPlugin"
+        }
+        register("kmpLibraryNativeEmpty") {
+            id = "com.mojeter.ccgo.gradle.kmp.library.native.empty"
+            implementationClass = "KmpLibraryNativeEmptyConventionPlugin"
+        }
+        register("kmpRoot") {
+            id = "com.mojeter.ccgo.gradle.kmp.root"
+            implementationClass = "KmpRootConventionPlugin"
+        }
     }
 }
 
