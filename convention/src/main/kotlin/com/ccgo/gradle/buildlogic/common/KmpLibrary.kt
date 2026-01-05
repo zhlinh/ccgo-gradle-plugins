@@ -211,6 +211,60 @@ internal fun Project.configureKmpCinterop() {
                         }
 
                         compilerOpts(*opts.toTypedArray())
+
+                        // Configure static library to link
+                        // This explicitly specifies the merged library name to avoid
+                        // cinterop auto-discovering module libraries that no longer exist
+                        // after the merge step in ccgo build
+                        // The library path is determined based on the target platform
+                        val target = this@withType
+                        val platformName = when {
+                            target.konanTarget.name.contains("ios") && !target.konanTarget.name.contains("simulator") -> "ios"
+                            target.konanTarget.name.contains("ios") && target.konanTarget.name.contains("simulator") -> "ios"
+                            target.konanTarget.name.contains("macos") -> "macos"
+                            target.konanTarget.name.contains("linux") -> "linux"
+                            else -> "unknown"
+                        }
+
+                        // Determine build mode (debug/release) and architecture
+                        // Uses ProjectConfig.isRelease which checks:
+                        // 1. Gradle property: -PisRelease=true
+                        // 2. Environment variable: CCGO_CI_BUILD_IS_RELEASE=true
+                        // 3. Default: false (debug build)
+                        val projectConfig = ProjectConfig.getDefault(project)
+                        val buildMode = if (projectConfig.isRelease) "release" else "debug"
+                        val archName = when (target.konanTarget.name) {
+                            "ios_arm64" -> "arm64"
+                            "ios_simulator_arm64" -> "arm64"
+                            "ios_x64" -> "x86_64"
+                            "macos_arm64" -> "arm64"
+                            "macos_x64" -> "x86_64"
+                            "linux_arm64" -> "arm64"
+                            "linux_x64" -> "x86_64"
+                            else -> "arm64"
+                        }
+
+                        // Determine device/simulator for iOS only
+                        // Note: ios_x64 is for simulator (x86_64), not device
+                        // macOS and Linux don't have device/simulator distinction
+                        val deviceType = when {
+                            target.konanTarget.name.contains("simulator") -> "simulator"
+                            target.konanTarget.name == "ios_x64" -> "simulator"  // ios_x64 is simulator
+                            target.konanTarget.name == "ios_arm64" -> "device"   // ios_arm64 is device
+                            else -> ""  // macOS, Linux don't have device/simulator
+                        }
+
+                        // Construct library path: cmake_build/{mode}/{platform}/static/{device}/{arch}/out
+                        val libPath = if (deviceType.isNotEmpty()) {
+                            project.file("../cmake_build/$buildMode/$platformName/static/$deviceType/$archName/out")
+                        } else {
+                            project.file("../cmake_build/$buildMode/$platformName/static/$archName/out")
+                        }
+
+                        if (libPath.exists()) {
+                            extraOpts("-libraryPath", libPath.absolutePath)
+                            extraOpts("-staticLibrary", "lib${projectNameLower}.a")
+                        }
                     }
                 }
             }
