@@ -96,9 +96,17 @@ class CCGOConfig(private val project: Project) {
     /**
      * Project group ID for Maven publishing (e.g., "com.example.project")
      * Read from [publish.maven].group_id in CCGO.toml
+     * Falls back to [publish.android.maven].group_id or [project].group_id
+     *
+     * The fallback chain matters: `ccgo` generates `[publish.android.maven]`, not
+     * `[publish.maven]`, so without it every generated project silently published
+     * under the "com.example" placeholder. kmpGroupId below already had the chain.
      */
     val groupId: String by lazy {
-        tomlResult?.getString("publish.maven.group_id") ?: "com.example"
+        tomlResult?.getString("publish.maven.group_id")
+            ?: tomlResult?.getString("publish.android.maven.group_id")
+            ?: tomlResult?.getString("project.group_id")
+            ?: "com.example"
     }
 
     /**
@@ -200,6 +208,8 @@ class CCGOConfig(private val project: Project) {
     val artifactId: String by lazy {
         tomlResult?.getString("publish.maven.artifact_id")
             ?.takeIf { it.isNotBlank() }
+            ?: tomlResult?.getString("publish.android.maven.artifact_id")
+                ?.takeIf { it.isNotBlank() }
             ?: projectName
     }
 
@@ -211,6 +221,7 @@ class CCGOConfig(private val project: Project) {
     val publishChannelDesc: String by lazy {
         // Try new location first, then fallback to old location
         tomlResult?.getString("publish.maven.channel_desc")?.takeUnless { it == "EMPTY" }
+            ?: tomlResult?.getString("publish.android.maven.channel_desc")?.takeUnless { it == "EMPTY" }
             ?: tomlResult?.getString("publish.channel_desc")?.takeUnless { it == "EMPTY" }
             ?: ""
     }
@@ -220,7 +231,8 @@ class CCGOConfig(private val project: Project) {
      * Read from [publish.maven].dependencies in CCGO.toml
      */
     val mavenDependencies: List<String> by lazy {
-        tomlResult?.getArray("publish.maven.dependencies")
+        (tomlResult?.getArray("publish.maven.dependencies")
+            ?: tomlResult?.getArray("publish.android.maven.dependencies"))
             ?.toList()
             ?.mapNotNull { it as? String }
             ?.filter { it.isNotBlank() && it.contains(":") }

@@ -11,6 +11,7 @@
 
 package com.ccgo.gradle.buildlogic.common
 
+import org.gradle.api.GradleException
 import com.ccgo.gradle.buildlogic.common.utils.ConfigKey
 import com.ccgo.gradle.buildlogic.common.utils.ConfigProvider
 import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUrl
@@ -65,9 +66,9 @@ private const val RELEASE_PUBLICATION_NAME = "release"
  * - SIGNING_IN_MEMORY_KEY / signingInMemoryKey
  * - SIGNING_IN_MEMORY_KEY_PASSWORD / signingInMemoryKeyPassword
  * - MAVEN_LOCAL_PATH / mavenLocalPath
- * - MAVEN_CUSTOM_URLS / mavenCustomUrls (comma-separated)
- * - MAVEN_CUSTOM_USERNAMES / mavenCustomUsernames (comma-separated)
- * - MAVEN_CUSTOM_PASSWORDS / mavenCustomPasswords (comma-separated)
+ * - CCGO_MAVEN_URL / mavenCustomUrls (comma-separated)
+ * - CCGO_MAVEN_USERNAME / mavenCustomUsernames (comma-separated)
+ * - CCGO_MAVEN_PASSWORD / mavenCustomPasswords (comma-separated)
  */
 internal fun Project.configurePublish() {
     project.afterEvaluate {
@@ -250,9 +251,9 @@ private fun Project.configureCentralMaven() {
  *
  * Configuration via environment variables or gradle.properties:
  * - Local: MAVEN_LOCAL_PATH / mavenLocalPath
- * - Custom: MAVEN_CUSTOM_URLS / mavenCustomUrls (comma-separated)
- *           MAVEN_CUSTOM_USERNAMES / mavenCustomUsernames (comma-separated)
- *           MAVEN_CUSTOM_PASSWORDS / mavenCustomPasswords (comma-separated)
+ * - Custom: CCGO_MAVEN_URL / mavenCustomUrls (comma-separated)
+ *           CCGO_MAVEN_USERNAME / mavenCustomUsernames (comma-separated)
+ *           CCGO_MAVEN_PASSWORD / mavenCustomPasswords (comma-separated)
  */
 private fun Project.configureCustomMaven() {
     extensions.configure<PublishingExtension> {
@@ -412,13 +413,24 @@ private fun Project.registerPublishTaskAliases() {
                 customTasks.add(task)
             }
         }
-        if (customTasks.isNotEmpty() && tasks.findByName("ccgoPublishTo${REPO_NAME_CUSTOM}") == null) {
+        // Register the alias even when no custom repository is configured. Skipping
+        // registration is what produced the useless
+        //   Task 'ccgoPublishToMavenCustom' not found in root project
+        // from `ccgo publish android --registry private`: the CLI always invokes this
+        // task name, so "not configured" surfaced as "not found" and pointed nowhere.
+        // Registering it and failing at execution time says what is actually missing.
+        if (tasks.findByName("ccgoPublishTo${REPO_NAME_CUSTOM}") == null) {
+            val configurationHint = getConfigurationHint()
             tasks.register("ccgoPublishTo${REPO_NAME_CUSTOM}") {
                 group = "publishing"
                 description = "Publishes release AAR to all custom Maven repositories"
-                // Depend on buildAARRelease to ensure release AAR exists before publishing
-                dependsOn(buildAARTasks)
-                dependsOn(customTasks)
+                if (customTasks.isEmpty()) {
+                    doFirst { throw GradleException(configurationHint) }
+                } else {
+                    // Depend on buildAARRelease to ensure release AAR exists before publishing
+                    dependsOn(buildAARTasks)
+                    dependsOn(customTasks)
+                }
             }
         }
 
@@ -602,10 +614,10 @@ private fun getConfigurationHint(): String {
         |  # Local Maven repository
         |  export MAVEN_LOCAL_PATH=/path/to/local/repo
         |
-        |  # Custom Maven repositories (comma-separated for multiple)
-        |  export MAVEN_CUSTOM_URLS=https://maven.example.com/releases,https://maven2.example.com
-        |  export MAVEN_CUSTOM_USERNAMES=user1,user2
-        |  export MAVEN_CUSTOM_PASSWORDS=pass1,pass2
+        |  # Custom Maven repositories - comma-separated for several at once
+        |  export CCGO_MAVEN_URL=https://maven.example.com/releases
+        |  export CCGO_MAVEN_USERNAME=user1
+        |  export CCGO_MAVEN_PASSWORD=pass1
         |
         |Or configure via ~/.gradle/gradle.properties:
         |  mavenLocalPath=/path/to/local/repo

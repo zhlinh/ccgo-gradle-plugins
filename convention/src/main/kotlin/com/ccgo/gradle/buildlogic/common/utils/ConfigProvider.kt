@@ -38,9 +38,13 @@ enum class ConfigKey(
     MAVEN_LOCAL_PATH("MAVEN_LOCAL_PATH", "mavenLocalPath", "publish.maven.local_path"),
 
     // Custom maven repositories (comma-separated for multiple)
-    MAVEN_CUSTOM_URLS("MAVEN_CUSTOM_URLS", "mavenCustomUrls", "publish.maven.custom_urls"),
-    MAVEN_CUSTOM_USERNAMES("MAVEN_CUSTOM_USERNAMES", "mavenCustomUsernames", "publish.maven.custom_usernames"),
-    MAVEN_CUSTOM_PASSWORDS("MAVEN_CUSTOM_PASSWORDS", "mavenCustomPasswords", "publish.maven.custom_passwords"),
+    // One environment variable name per key, singular: the value is split on commas
+    // (see getCustomMavenRepos), so several repositories mean a longer value, not a
+    // second variable name. Renamed from MAVEN_CUSTOM_* so the android and KMP publish
+    // paths stop each inventing their own spelling.
+    CCGO_MAVEN_URL("CCGO_MAVEN_URL", "mavenCustomUrls", "publish.maven.custom_urls"),
+    CCGO_MAVEN_USERNAME("CCGO_MAVEN_USERNAME", "mavenCustomUsernames", "publish.maven.custom_usernames"),
+    CCGO_MAVEN_PASSWORD("CCGO_MAVEN_PASSWORD", "mavenCustomPasswords", "publish.maven.custom_passwords"),
 
     // Sign enabled flag
     SIGN_ENABLED("SIGN_ENABLED", "signEnabled", "publish.sign_enabled")
@@ -132,7 +136,7 @@ object ConfigProvider {
      * URLs, usernames, and passwords are comma-separated and correspond by index.
      */
     fun getCustomMavenRepos(project: Project): List<CustomMavenRepo> {
-        val urls = get(project, ConfigKey.MAVEN_CUSTOM_URLS)
+        val urls = get(project, ConfigKey.CCGO_MAVEN_URL)
             .split(",")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -142,11 +146,11 @@ object ConfigProvider {
             return TomlConfigReader.getCustomMavenRepos(project)
         }
 
-        val usernames = get(project, ConfigKey.MAVEN_CUSTOM_USERNAMES)
+        val usernames = get(project, ConfigKey.CCGO_MAVEN_USERNAME)
             .split(",")
             .map { it.trim() }
 
-        val passwords = get(project, ConfigKey.MAVEN_CUSTOM_PASSWORDS)
+        val passwords = get(project, ConfigKey.CCGO_MAVEN_PASSWORD)
             .split(",")
             .map { it.trim() }
 

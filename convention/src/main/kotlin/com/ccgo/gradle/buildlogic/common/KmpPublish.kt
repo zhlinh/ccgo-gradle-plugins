@@ -49,9 +49,9 @@ private const val REPO_NAME_CUSTOM = "MavenCustom"
  * - SIGNING_IN_MEMORY_KEY / signingInMemoryKey
  * - SIGNING_IN_MEMORY_KEY_PASSWORD / signingInMemoryKeyPassword
  * - MAVEN_LOCAL_PATH / mavenLocalPath
- * - MAVEN_CUSTOM_URLS / mavenCustomUrls (comma-separated)
- * - MAVEN_CUSTOM_USERNAMES / mavenCustomUsernames (comma-separated)
- * - MAVEN_CUSTOM_PASSWORDS / mavenCustomPasswords (comma-separated)
+ * - CCGO_MAVEN_URL / mavenCustomUrls (comma-separated)
+ * - CCGO_MAVEN_USERNAME / mavenCustomUsernames (comma-separated)
+ * - CCGO_MAVEN_PASSWORD / mavenCustomPasswords (comma-separated)
  */
 internal fun Project.configureKmpPublish() {
     // Configure nmcp for Maven Central publishing
@@ -399,9 +399,9 @@ private fun Project.registerKmpPublishTaskAliases() {
                     |To publish to custom Maven repositories, configure one of:
                     |
                     |1. Environment variables:
-                    |   MAVEN_CUSTOM_URLS=https://your-repo.com/maven
-                    |   MAVEN_CUSTOM_USERNAMES=your-username
-                    |   MAVEN_CUSTOM_PASSWORDS=your-password
+                    |   CCGO_MAVEN_URL=https://your-repo.com/maven
+                    |   CCGO_MAVEN_USERNAME=your-username
+                    |   CCGO_MAVEN_PASSWORD=your-password
                     |
                     |2. CCGO.toml [publish.maven] section:
                     |   custom_urls = ["https://your-repo.com/maven"]
