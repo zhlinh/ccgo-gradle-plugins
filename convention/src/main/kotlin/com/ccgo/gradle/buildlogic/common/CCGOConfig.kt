@@ -258,11 +258,15 @@ class CCGOConfig(private val project: Project) {
 
     /**
      * KMP group ID for Maven publishing
-     * Read from [publish.kmp].group_id in CCGO.toml
-     * Falls back to [publish.android.maven].group_id or [project].group_id
+     * Read from [publish.kmp.maven].group_id in CCGO.toml — the schema is
+     * [publish.<target>.<registry>], which is why apple can carry both
+     * [publish.apple.cocoapods] and [publish.apple.spm].
+     * Falls back to [publish.kmp].group_id (the older spelling), then to
+     * [publish.android.maven].group_id or [project].group_id
      */
     val kmpGroupId: String by lazy {
-        tomlResult?.getString("publish.kmp.group_id")
+        tomlResult?.getString("publish.kmp.maven.group_id")
+            ?: tomlResult?.getString("publish.kmp.group_id")
             ?: tomlResult?.getString("publish.android.maven.group_id")
             ?: tomlResult?.getString("project.group_id")
             ?: groupId
@@ -270,11 +274,14 @@ class CCGOConfig(private val project: Project) {
 
     /**
      * KMP artifact ID for publishing
-     * Read from [publish.kmp].artifact_id in CCGO.toml
+     * Read from [publish.kmp.maven].artifact_id in CCGO.toml
+     * Falls back to [publish.kmp].artifact_id (the older spelling)
      * Defaults to project name + "-kmp" if not specified
      */
     val kmpArtifactId: String by lazy {
-        tomlResult?.getString("publish.kmp.artifact_id")
+        tomlResult?.getString("publish.kmp.maven.artifact_id")
+            ?.takeIf { it.isNotBlank() }
+            ?: tomlResult?.getString("publish.kmp.artifact_id")
             ?.takeIf { it.isNotBlank() }
             ?: "${projectName}-kmp"
     }
@@ -292,11 +299,16 @@ class CCGOConfig(private val project: Project) {
 
     /**
      * KMP dependencies for commonMain sourceSet
-     * Read from [publish.kmp].dependencies in CCGO.toml
+     * Read from [publish.kmp.maven].dependencies in CCGO.toml, matching the
+     * [publish.android.maven].dependencies spelling. [publish.kmp].dependencies
+     * still works — the maven-coordinate keys moved under .maven, while
+     * android_min_sdk and ios_deployment_target stay on [publish.kmp] because
+     * they are build settings, not publication coordinates.
      * Each dependency should have group, artifact, and version fields
      */
     val kmpDependencies: List<KmpDependency> by lazy {
-        tomlResult?.getArray("publish.kmp.dependencies")
+        (tomlResult?.getArray("publish.kmp.maven.dependencies")
+            ?: tomlResult?.getArray("publish.kmp.dependencies"))
             ?.toList()
             ?.mapNotNull { item ->
                 val table = item as? org.tomlj.TomlTable ?: return@mapNotNull null
