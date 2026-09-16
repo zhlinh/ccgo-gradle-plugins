@@ -114,7 +114,13 @@ class CCGOConfig(private val project: Project) {
      * Read from [android].stl in CCGO.toml
      */
     val androidStl: String by lazy {
-        tomlResult?.getString("android.stl") ?: "c++_shared"
+        // CCGO_ANDROID_STL is what `ccgo build android --stl ...` just handed CMake.
+        // It has to win here: this value decides the `-stdembed` artifact name, and a
+        // name that disagrees with the runtime the .so actually links is worse than
+        // either choice on its own.
+        System.getenv("CCGO_ANDROID_STL")?.takeIf { it.isNotBlank() }
+            ?: tomlResult?.getString("android.stl")
+            ?: "c++_shared"
     }
 
     /**
