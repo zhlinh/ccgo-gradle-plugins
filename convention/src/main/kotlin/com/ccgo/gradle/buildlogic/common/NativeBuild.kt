@@ -166,7 +166,16 @@ internal fun Project.createBuildLibrariesTask(inputProjectName: String) {
         // Use ccgo CLI command instead of calling Python module directly
         // --native-only flag indicates we only want to build native libraries (.so files)
         // without additional packaging (Gradle will handle the AAR packaging)
-        var command = mutableListOf("ccgo", "build", "android", "--arch", cmakeAbiFilters.joinToString(","), "--native-only")
+        // Forward the resolved runtime. Without it this nested build defaults to
+        // c++_shared and, with [android].distribute_stl on, drops libc++_shared.so
+        // back into jniLibs after the outer build already cleaned it — a
+        // -stdembed AAR that still ships the runtime it claims to have embedded.
+        var command = mutableListOf(
+            "ccgo", "build", "android",
+            "--arch", cmakeAbiFilters.joinToString(","),
+            "--stl", cfgs.commAndroidStl,
+            "--native-only"
+        )
         println("[${inputProjectName}] command:${command}")
         commandLine(command)
 
