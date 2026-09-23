@@ -48,18 +48,23 @@ internal fun generateLocalProperties(rootDirPath: String) {
 
 /**
  * Get a property from the local.properties file.
+ *
+ * [defaultValue] is nullable on purpose: callers routinely pass
+ * `System.getenv(...)`, whose platform type slips past the compiler and blows
+ * up at the call site with `getenv("X") must not be null` the moment the
+ * variable is unset. An unset variable means "no default", not a crash.
  */
-internal fun Project.getLocalProperties(key: String, defaultValue:  String) : String {
+internal fun Project.getLocalProperties(key: String, defaultValue: String?) : String {
     return getLocalProperties(rootDir.absolutePath, key, defaultValue)
 }
 
 /**
  * Get a property from the local.properties file.
  */
-internal fun getLocalProperties(rootDirPath: String, key: String, defaultValue:  String) : String {
+internal fun getLocalProperties(rootDirPath: String, key: String, defaultValue: String?) : String {
     val rootDir = File(rootDirPath)
     val file = File(rootDir, "local.properties")
-    var ret = defaultValue
+    var ret = defaultValue ?: ""
     try {
         val properties = Properties()
         if (!file.exists()) {
@@ -68,7 +73,7 @@ internal fun getLocalProperties(rootDirPath: String, key: String, defaultValue: 
         java.io.InputStreamReader(java.io.FileInputStream(file), Charsets.UTF_8).use { reader ->
             properties.load(reader)
         }
-        val debugStr = properties.getProperty(key, defaultValue) as String
+        val debugStr = properties.getProperty(key, ret) as String
         if (debugStr.isNotEmpty()) {
             ret = debugStr
         }

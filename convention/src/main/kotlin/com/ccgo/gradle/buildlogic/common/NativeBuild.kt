@@ -122,7 +122,16 @@ internal fun Project.createBuildLibrariesTask(inputProjectName: String) {
         workingDir = project.rootDir.parentFile
         val sdkDir = getLocalProperties("sdk.dir", System.getenv("ANDROID_HOME"))
         val ndkDir = getLocalProperties("ndk.dir", System.getenv("NDK_ROOT"))
+        // Empty is fine here — ccgo locates cmake itself. Say so once when it
+        // really is missing, so an absent cmake does not resurface at configure
+        // time wearing a different face.
         val cmakeDir = getLocalProperties("cmake.dir", System.getenv("CMAKE_HOME"))
+        if (cmakeDir.isEmpty()) {
+            project.logger.lifecycle(
+                "[ccgo] CMAKE_HOME unset and no cmake.dir in local.properties; " +
+                "letting ccgo find cmake on its own"
+            )
+        }
         var cmakeAbiFilters = cfgs.cmakeAbiFiltersAsList
         // to get the path
         var path = System.getenv("PATH")
@@ -176,6 +185,15 @@ internal fun Project.createBuildLibrariesTask(inputProjectName: String) {
             "--stl", cfgs.commAndroidStl,
             "--native-only"
         )
+        // Same story as --stl: not forwarding it leaves the nested build on
+        // debug, so `ccgo publish --release` ships a package holding
+        // ccgo_build/debug libraries. CCGO_BUILD_TYPE is what ccgo sets;
+        // -PccgoBuildType is for the project's own build.gradle.kts. Accept both.
+        val buildType = System.getenv("CCGO_BUILD_TYPE")
+            ?: project.findProperty("ccgoBuildType") as String?
+        if (buildType == "release") {
+            command.add("--release")
+        }
         println("[${inputProjectName}] command:${command}")
         commandLine(command)
 
