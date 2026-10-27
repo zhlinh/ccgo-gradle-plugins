@@ -183,10 +183,35 @@ private fun Project.gitUserEmailProvider(): Provider<String> = providers.exec {
     isIgnoreExitValue = true
 }.standardOutput.asText.map { it.trim().ifEmpty { "" } }
 
-private fun Project.hasGpgAgentProvider(): Provider<Boolean> = providers.exec {
-    commandLine("gpg", "--list-secret-keys")
-    isIgnoreExitValue = true
-}.standardOutput.asText.map { it.contains("sec") }
+private fun gpgExecutable(): String? {
+    val name = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+        "gpg.exe"
+    } else {
+        "gpg"
+    }
+    return System.getenv("PATH")
+        ?.split(java.io.File.pathSeparator)
+        ?.asSequence()
+        ?.map { java.io.File(it, name) }
+        ?.firstOrNull { it.isFile && it.canExecute() }
+        ?.absolutePath
+}
+
+private fun hasGpgAgent(): Boolean {
+    // `providers.exec` records a start failure as a Gradle configuration problem
+    // even when the exception is caught, which breaks every build on a machine
+    // without gpg. Only probe when the executable exists, and use a plain
+    // ProcessBuilder so a missing/failed gpg is simply "not available".
+    val executable = gpgExecutable() ?: return false
+    return runCatching {
+        val process = ProcessBuilder(executable, "--list-secret-keys")
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        process.waitFor()
+        output.contains("sec")
+    }.getOrDefault(false)
+}
 
 /**
  * Prepares and validates a PGP key for signing.
@@ -228,9 +253,8 @@ private fun Project.configureKmpSign() {
     val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
     val hasSigningKeys = rawSigningKey.isNotEmpty() && signingPassword.isNotEmpty()
 
-    // Use lazy provider for GPG check
     // A machine publishing locally may not have gpg installed at all.
-    val hasGpgAgent = runCatching { hasGpgAgentProvider().getOrElse(false) }.getOrDefault(false)
+    val hasGpgAgent = hasGpgAgent()
 
     extensions.configure<SigningExtension> {
         isRequired = false
