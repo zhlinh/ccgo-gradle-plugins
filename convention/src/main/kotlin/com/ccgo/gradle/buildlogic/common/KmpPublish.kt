@@ -61,6 +61,87 @@ internal fun Project.configureKmpPublish() {
         configureKmpMaven()
         configureKmpSign()
     }
+
+    providers.gradleProperty("ccgoKmpSdkManifest").orNull?.let { manifest ->
+        // Kotlin creates publications in afterEvaluate. Replace them only once
+        // every project has finished configuring, before the task graph is built.
+        gradle.projectsEvaluated {
+            configureKmpSdkPublications(file(manifest))
+        }
+    }
+}
+
+/** Publish only the prebuilt platform modules present in a CCGO SDK. */
+private fun Project.configureKmpSdkPublications(manifestFile: java.io.File) {
+    @Suppress("UNCHECKED_CAST")
+    val manifest = groovy.json.JsonSlurper().parse(manifestFile) as Map<String, Any>
+    val config = CCGOConfig.getDefault(this)
+    require(manifest["project"] == config.projectName) {
+        "KMP SDK project '${manifest["project"]}' does not match '${config.projectName}'"
+    }
+    val sdkVersion = manifest["version"] as String
+    @Suppress("UNCHECKED_CAST")
+    val artifacts = manifest["artifacts"] as List<Map<String, Any?>>
+    require(artifacts.isNotEmpty()) { "KMP SDK contains no artifacts" }
+    val publishing = extensions.getByType(PublishingExtension::class.java)
+    val previous = publishing.publications.toSet()
+    previous.filterIsInstance<MavenPublication>().forEach {
+        it.setArtifacts(emptyList<Any>())
+    }
+
+    // Removing publications leaves their publish tasks registered in Gradle.
+    // Remove those tasks' dependencies too: disabling a task alone still builds
+    // its inputs, which could silently rebuild the SDK from current sources.
+    tasks.withType(org.gradle.api.publish.maven.tasks.AbstractPublishToMaven::class.java).forEach { task ->
+        if (task.publication in previous) {
+            task.enabled = false
+            task.setDependsOn(emptyList<Any>())
+        }
+    }
+    publishing.publications.clear()
+    artifacts.groupBy { it["target"] as String }.forEach { (target, files) ->
+        publishing.publications.create("ccgoSdk${target.replaceFirstChar { it.uppercaseChar() }}", MavenPublication::class.java) {
+            groupId = config.kmpGroupId
+            artifactId = "${config.kmpArtifactId}-$target"
+            version = sdkVersion
+            files.forEach { entry ->
+                artifact(file(entry["path"] as String)) {
+                    classifier = entry["classifier"] as String?
+                }
+            }
+            pom {
+                name.set("${config.projectName} KMP - $target")
+                description.set("Prebuilt ${config.projectName} KMP SDK ($target)")
+                // SDK archives do not contain POM/module metadata. Preserve the
+                // dependencies explicitly declared by the project configuration.
+                withXml {
+                    if (config.kmpDependencies.isNotEmpty()) {
+                        val dependencies = asNode().appendNode("dependencies")
+                        config.kmpDependencies.forEach { dep ->
+                            val node = dependencies.appendNode("dependency")
+                            node.appendNode("groupId", dep.group)
+                            node.appendNode("artifactId", dep.artifact)
+                            node.appendNode("version", dep.version)
+                            node.appendNode("scope", "compile")
+                        }
+                    }
+                }
+            }
+            println("[KMP-SDK] Publishing $groupId:$artifactId:$version from ${files.size} prebuilt file(s)")
+        }
+    }
+    // Publish aggregators retain tasks for removed publications. Filter the
+    // resolved direct dependencies, preserving nmcp's own preparation tasks.
+    tasks.matching {
+        it.name == "publish" || it.name == "publishToMavenLocal" ||
+            it.name.startsWith("publishAllPublicationsTo") || it.name.startsWith("ccgoPublishTo")
+    }.forEach { aggregate ->
+        aggregate.setDependsOn(aggregate.taskDependencies.getDependencies(aggregate).filterNot {
+            it is org.gradle.api.publish.maven.tasks.AbstractPublishToMaven && it.publication in previous
+        })
+    }
+    extensions.extraProperties.set("ccgoKmpSdkSupported", true)
+    println("[KMP-SDK] Only bundled platform modules are published; no root KMP module is synthesized")
 }
 
 /**
@@ -89,14 +170,17 @@ private fun Project.configureKmpNmcp() {
 // Lazy providers for git info to avoid configuration cache issues
 private fun Project.gitRepoUrlProvider(): Provider<String> = providers.exec {
     commandLine("git", "config", "--get", "remote.origin.url")
+    isIgnoreExitValue = true
 }.standardOutput.asText.map { it.trim().ifEmpty { "" } }
 
 private fun Project.gitUserNameProvider(): Provider<String> = providers.exec {
     commandLine("git", "config", "--get", "user.name")
+    isIgnoreExitValue = true
 }.standardOutput.asText.map { it.trim().ifEmpty { "Unknown" } }
 
 private fun Project.gitUserEmailProvider(): Provider<String> = providers.exec {
     commandLine("git", "config", "--get", "user.email")
+    isIgnoreExitValue = true
 }.standardOutput.asText.map { it.trim().ifEmpty { "" } }
 
 private fun Project.hasGpgAgentProvider(): Provider<Boolean> = providers.exec {
@@ -145,7 +229,8 @@ private fun Project.configureKmpSign() {
     val hasSigningKeys = rawSigningKey.isNotEmpty() && signingPassword.isNotEmpty()
 
     // Use lazy provider for GPG check
-    val hasGpgAgent = hasGpgAgentProvider()
+    // A machine publishing locally may not have gpg installed at all.
+    val hasGpgAgent = runCatching { hasGpgAgentProvider().getOrElse(false) }.getOrDefault(false)
 
     extensions.configure<SigningExtension> {
         isRequired = false
@@ -169,7 +254,7 @@ private fun Project.configureKmpSign() {
                     }
                 }
             }
-            hasGpgAgent.getOrElse(false) -> {
+            hasGpgAgent -> {
                 println("[KMP-Signing] Configured with GPG command-line tool")
                 useGpgCmd()
                 val publishing = project.extensions.getByName("publishing") as PublishingExtension
@@ -187,7 +272,7 @@ private fun Project.configureKmpSign() {
     // Configure signing tasks to be skipped if no signing is configured
     tasks.withType(org.gradle.plugins.signing.Sign::class.java).configureEach {
         onlyIf {
-            hasSigningKeys || hasGpgAgent.getOrElse(false)
+            hasSigningKeys || hasGpgAgent
         }
     }
 }
@@ -302,7 +387,7 @@ private fun Project.registerKmpPublishTaskAliases() {
             println("=".repeat(80))
             println("[KMP-Publish] SUCCESS: Published to Maven Local")
             println("[KMP-Publish] Repository: $expandedLocalPath")
-            println("[KMP-Publish] Coordinates: $groupId:$artifactId:$versionName")
+            printKmpCoordinates("$groupId:$artifactId:$versionName")
             println("=".repeat(80))
         }
     }
@@ -363,7 +448,7 @@ private fun Project.registerKmpPublishTaskAliases() {
             println("=".repeat(80))
             println("[KMP-Publish] SUCCESS: Published to Maven Central")
             println("[KMP-Publish] URL: https://central.sonatype.com")
-            println("[KMP-Publish] Coordinates: $groupId:$artifactId:$versionName")
+            printKmpCoordinates("$groupId:$artifactId:$versionName")
             println("=".repeat(80))
         }
     }
@@ -391,7 +476,7 @@ private fun Project.registerKmpPublishTaskAliases() {
                 customRepos.forEach { repo ->
                     println("[KMP-Publish] Repository ${repo.index}: ${repo.url}")
                 }
-                println("[KMP-Publish] Coordinates: $groupId:$artifactId:$versionName")
+                printKmpCoordinates("$groupId:$artifactId:$versionName")
                 println("=".repeat(80))
             }
         } else {
@@ -424,5 +509,15 @@ private fun Project.registerKmpPublishTaskAliases() {
     }
     if (customRepos.isNotEmpty()) {
         println("[KMP-Publish] Command: ./gradlew ccgoPublishTo${REPO_NAME_CUSTOM}")
+    }
+}
+
+private fun Project.printKmpCoordinates(fallback: String) {
+    if (providers.gradleProperty("ccgoKmpSdkManifest").isPresent) {
+        extensions.getByType(PublishingExtension::class.java).publications.withType(MavenPublication::class.java).forEach {
+            println("[KMP-Publish] Coordinates: ${it.groupId}:${it.artifactId}:${it.version}")
+        }
+    } else {
+        println("[KMP-Publish] Coordinates: $fallback")
     }
 }

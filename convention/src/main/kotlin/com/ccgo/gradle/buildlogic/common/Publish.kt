@@ -323,11 +323,20 @@ private fun Project.configureCustomMaven() {
         }
 
         publications {
+            project.extensions.extraProperties.set("ccgoPublishPathSupported", true)
             val publishConfig = mutableMapOf(
                 // release always use release build
                 // AAR is always in ../target/release/android/ (relative to android/ directory)
                 // since publish depends on buildAARRelease which copies to project root's target/
-                RELEASE_PUBLICATION_NAME to "../target/release/android/${cfgs.getMainArchiveAarName("release")}",
+                RELEASE_PUBLICATION_NAME to (providers.gradleProperty("ccgoPublishPath").orNull
+                    ?.let { path ->
+                        val aar = file(path)
+                        require(aar.isFile && aar.extension == "aar") {
+                            "ccgoPublishPath must point to an existing .aar file: $path"
+                        }
+                        aar.absolutePath
+                    }
+                    ?: "../target/release/android/${cfgs.getMainArchiveAarName("release")}"),
             )
 
             for ((publishName, artifactName) in publishConfig) {
@@ -376,7 +385,11 @@ private fun Project.registerPublishTaskAliases() {
         // that will find the task when the dependency is resolved
         // Publishing should always use release builds, so depend on buildAARRelease
         // which runs buildAAR with -PisRelease=true
-        val buildAARTasks = rootProject.tasks.matching { it.name == "buildAARRelease" }
+        val skipPublishBuild = providers.gradleProperty("ccgoPublishPath").isPresent ||
+            providers.gradleProperty("ccgoSkipPublishBuild").orNull == "true"
+        val buildAARTasks = rootProject.tasks.matching {
+            !skipPublishBuild && it.name == "buildAARRelease"
+        }
 
         // Register alias task for Maven Local
         // Use unique name "ccgoPublishToMavenLocal" to avoid conflicts with vanniktech maven-publish plugin
