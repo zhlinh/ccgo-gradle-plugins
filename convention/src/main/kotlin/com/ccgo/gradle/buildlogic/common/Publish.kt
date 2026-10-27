@@ -14,6 +14,7 @@ package com.ccgo.gradle.buildlogic.common
 import org.gradle.api.GradleException
 import com.ccgo.gradle.buildlogic.common.utils.ConfigKey
 import com.ccgo.gradle.buildlogic.common.utils.ConfigProvider
+import com.ccgo.gradle.buildlogic.common.utils.CustomMavenRepo
 import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUrl
 import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUserEmail
 import com.ccgo.gradle.buildlogic.common.utils.getGitRepoUserName
@@ -360,159 +361,181 @@ private fun Project.configureCustomMaven() {
  * - publishToMavenCentral -> publishAllPublicationsToMavenCentralRepository
  */
 private fun Project.registerPublishTaskAliases() {
-    // Use gradle.projectsEvaluated to ensure all publications and tasks are created
-    // This runs after all afterEvaluate blocks are completed
+    // Run after every project's afterEvaluate so all publications exist.
     gradle.projectsEvaluated {
-        // Get artifact info for success message
         val groupId = cfgs.commGroupId
         val artifactId = getProjectArtifactId()
         val versionName = cfgs.versionName
+        val localPath = localMavenPath()
+        val artifactPath = "$localPath/${groupId.replace('.', '/')}/$artifactId/$versionName"
+        val buildAARTasks = publishBuildTasks()
 
-        // Calculate local path
-        val configuredPath = ConfigProvider.getLocalMavenPath(project)
-        val expandedLocalPath = if (!configuredPath.isNullOrBlank()) {
-            if (configuredPath.startsWith("~")) {
-                configuredPath.replaceFirst("~", System.getProperty("user.home"))
-            } else {
-                configuredPath
-            }
+        registerLocalPublishAlias(buildAARTasks)
+        registerCentralPublishAlias(buildAARTasks)
+        registerCustomPublishAlias(buildAARTasks)
+        reportPublishSuccess(
+            groupId,
+            artifactId,
+            versionName,
+            localPath,
+            artifactPath,
+            ConfigProvider.getCustomMavenRepos(project),
+        )
+    }
+}
+
+private fun Project.localMavenPath(): String {
+    val configured = ConfigProvider.getLocalMavenPath(project)
+    return when {
+        configured.isNullOrBlank() -> "${System.getProperty("user.home")}/.m2/repository"
+        configured.startsWith("~") ->
+            configured.replaceFirst("~", System.getProperty("user.home"))
+        else -> configured
+    }
+}
+
+/** Lazy lookup so the dependency resolves even when buildAARRelease is created later. */
+private fun Project.publishBuildTasks(): Any {
+    val skip = providers.gradleProperty("ccgoPublishPath").isPresent ||
+        providers.gradleProperty("ccgoSkipPublishBuild").orNull == "true"
+    return rootProject.tasks.matching { !skip && it.name == "buildAARRelease" }
+}
+
+private fun Project.registerLocalPublishAlias(buildAARTasks: Any) {
+    val releaseLocalTask = tasks.findByName(
+        "publish${RELEASE_PUBLICATION_NAME.replaceFirstChar { it.uppercaseChar() }}" +
+            "PublicationTo${REPO_NAME_LOCAL}Repository",
+    ) ?: return
+    if (tasks.findByName("ccgoPublishTo${REPO_NAME_LOCAL}") != null) return
+    tasks.register("ccgoPublishTo${REPO_NAME_LOCAL}") {
+        group = "publishing"
+        description = "Publishes release AAR to the local Maven repository"
+        dependsOn(buildAARTasks)
+        dependsOn(releaseLocalTask)
+    }
+}
+
+private fun Project.registerCentralPublishAlias(buildAARTasks: Any) {
+    val centralPortalTask = tasks.findByName("publishAggregationToCentralPortal") ?: return
+    if (tasks.findByName("ccgoPublishToMavenCentral") != null) return
+    tasks.register("ccgoPublishToMavenCentral") {
+        group = "publishing"
+        description = "Publishes release AAR to Maven Central via Central Portal"
+        dependsOn(buildAARTasks)
+        dependsOn(centralPortalTask)
+    }
+}
+
+private fun Project.registerCustomPublishAlias(buildAARTasks: Any) {
+    if (tasks.findByName("ccgoPublishTo${REPO_NAME_CUSTOM}") != null) return
+    val customTasks = customRepositoryPublishTasks()
+    val configurationHint = getConfigurationHint()
+    // Register even when no custom repository is configured: the CLI always invokes
+    // this task name, so a missing task surfaced as "Task not found" instead of
+    // explaining that the repository is unconfigured.
+    tasks.register("ccgoPublishTo${REPO_NAME_CUSTOM}") {
+        group = "publishing"
+        description = "Publishes release AAR to all custom Maven repositories"
+        if (customTasks.isEmpty()) {
+            doFirst { throw GradleException(configurationHint) }
         } else {
-            "${System.getProperty("user.home")}/.m2/repository"
+            dependsOn(buildAARTasks)
+            dependsOn(customTasks)
         }
-        val artifactPath = "$expandedLocalPath/${groupId.replace('.', '/')}/$artifactId/$versionName"
+    }
+}
 
-        // Use tasks.matching for lazy task lookup - this creates a live collection
-        // that will find the task when the dependency is resolved
-        // Publishing should always use release builds, so depend on buildAARRelease
-        // which runs buildAAR with -PisRelease=true
-        val skipPublishBuild = providers.gradleProperty("ccgoPublishPath").isPresent ||
-            providers.gradleProperty("ccgoSkipPublishBuild").orNull == "true"
-        val buildAARTasks = rootProject.tasks.matching {
-            !skipPublishBuild && it.name == "buildAARRelease"
-        }
+private fun Project.customRepositoryPublishTasks() =
+    (0..9).mapNotNull { index ->
+        val prefix =
+            "publish${RELEASE_PUBLICATION_NAME.replaceFirstChar { it.uppercaseChar() }}" +
+                "PublicationTo${REPO_NAME_CUSTOM}${index}Repository"
+        tasks.findByName(prefix)
+    }
 
-        // Register alias task for Maven Local
-        // Use unique name "ccgoPublishToMavenLocal" to avoid conflicts with vanniktech maven-publish plugin
-        val releaseLocalTask = tasks.findByName("publish${RELEASE_PUBLICATION_NAME.replaceFirstChar { it.uppercaseChar() }}PublicationTo${REPO_NAME_LOCAL}Repository")
-        if (releaseLocalTask != null && tasks.findByName("ccgoPublishTo${REPO_NAME_LOCAL}") == null) {
-            tasks.register("ccgoPublishTo${REPO_NAME_LOCAL}") {
-                group = "publishing"
-                description = "Publishes release AAR to the local Maven repository"
-                // Depend on buildAARRelease to ensure release AAR exists before publishing
-                dependsOn(buildAARTasks)
-                dependsOn(releaseLocalTask)
-            }
-        }
+private fun Project.reportPublishSuccess(
+    groupId: String,
+    artifactId: String,
+    versionName: String,
+    localPath: String,
+    artifactPath: String,
+    customRepos: List<CustomMavenRepo>,
+) {
+    var localTaskSuccess = false
+    var centralTaskSuccess = false
+    var customTaskSuccess = false
 
-        // Alias for Maven Central (nmcp uses publishAggregationToCentralPortal)
-        val centralPortalTask = tasks.findByName("publishAggregationToCentralPortal")
-        if (centralPortalTask != null && tasks.findByName("ccgoPublishToMavenCentral") == null) {
-            tasks.register("ccgoPublishToMavenCentral") {
-                group = "publishing"
-                description = "Publishes release AAR to Maven Central via Central Portal"
-                // Depend on buildAARRelease to ensure release AAR exists before publishing
-                dependsOn(buildAARTasks)
-                dependsOn(centralPortalTask)
-            }
-        }
+    gradle.taskGraph.afterTask {
+        if (state.failure == null) {
+            when (name) {
+                "ccgoPublishTo${REPO_NAME_LOCAL}",
+                "publish${RELEASE_PUBLICATION_NAME.replaceFirstChar { it.uppercaseChar() }}" +
+                    "PublicationTo${REPO_NAME_LOCAL}Repository",
+                -> localTaskSuccess = true
 
-        // Alias for Maven Custom - publishes release publication to ALL custom repositories
-        val customTasks = mutableListOf<Any>()
-        val releasePublishPrefix = "publish${RELEASE_PUBLICATION_NAME.replaceFirstChar { it.uppercaseChar() }}PublicationTo"
-        // Find all custom repository tasks for release publication (MavenCustom0, MavenCustom1, ...)
-        for (i in 0..9) {
-            val task = tasks.findByName("${releasePublishPrefix}${REPO_NAME_CUSTOM}${i}Repository")
-            if (task != null) {
-                customTasks.add(task)
-            }
-        }
-        // Register the alias even when no custom repository is configured. Skipping
-        // registration is what produced the useless
-        //   Task 'ccgoPublishToMavenCustom' not found in root project
-        // from `ccgo publish android --registry private`: the CLI always invokes this
-        // task name, so "not configured" surfaced as "not found" and pointed nowhere.
-        // Registering it and failing at execution time says what is actually missing.
-        if (tasks.findByName("ccgoPublishTo${REPO_NAME_CUSTOM}") == null) {
-            val configurationHint = getConfigurationHint()
-            tasks.register("ccgoPublishTo${REPO_NAME_CUSTOM}") {
-                group = "publishing"
-                description = "Publishes release AAR to all custom Maven repositories"
-                if (customTasks.isEmpty()) {
-                    doFirst { throw GradleException(configurationHint) }
-                } else {
-                    // Depend on buildAARRelease to ensure release AAR exists before publishing
-                    dependsOn(buildAARTasks)
-                    dependsOn(customTasks)
-                }
-            }
-        }
+                "ccgoPublishToMavenCentral", "publishAggregationToCentralPortal" ->
+                    centralTaskSuccess = true
 
-        // Get custom repos for success message
-        val customRepos = ConfigProvider.getCustomMavenRepos(project)
-
-        // Track which publish tasks completed successfully
-        var localTaskSuccess = false
-        var centralTaskSuccess = false
-        var customTaskSuccess = false
-
-        // Use taskGraph.afterTask to track successful task completion
-        gradle.taskGraph.afterTask {
-            if (state.failure == null) {
-                when (name) {
-                    "ccgoPublishTo${REPO_NAME_LOCAL}", "publish${RELEASE_PUBLICATION_NAME.replaceFirstChar { it.uppercaseChar() }}PublicationTo${REPO_NAME_LOCAL}Repository" -> {
-                        localTaskSuccess = true
-                    }
-                    // nmcp task: publishAggregationToCentralPortal
-                    "ccgoPublishToMavenCentral", "publishAggregationToCentralPortal" -> {
-                        centralTaskSuccess = true
-                    }
-                    "ccgoPublishTo${REPO_NAME_CUSTOM}" -> {
-                        customTaskSuccess = true
-                    }
-                }
-            }
-        }
-
-        // Use gradle.buildFinished to print success message only when build succeeds
-        gradle.buildFinished {
-            if (failure != null) {
-                // Build failed, don't print success message
-                return@buildFinished
-            }
-
-            if (localTaskSuccess) {
-                println("")
-                println("=".repeat(80))
-                println("[Publish] SUCCESS: Published to Maven Local")
-                println("[Publish] Repository: $expandedLocalPath")
-                println("[Publish] Artifact path: $artifactPath")
-                println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-                println("=".repeat(80))
-            }
-
-            if (centralTaskSuccess) {
-                println("")
-                println("=".repeat(80))
-                println("[Publish] SUCCESS: Published to Maven Central")
-                println("[Publish] URL: https://central.sonatype.com")
-                println("[Publish] Search: https://central.sonatype.com/search?q=$groupId:$artifactId")
-                println("[Publish] Artifact: https://central.sonatype.com/artifact/$groupId/$artifactId/$versionName")
-                println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-                println("=".repeat(80))
-            }
-
-            if (customTaskSuccess) {
-                println("")
-                println("=".repeat(80))
-                println("[Publish] SUCCESS: Published to Maven Custom repositories")
-                customRepos.forEach { repo ->
-                    println("[Publish] Repository ${repo.index}: ${repo.url}")
-                }
-                println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
-                println("=".repeat(80))
+                "ccgoPublishTo${REPO_NAME_CUSTOM}" -> customTaskSuccess = true
             }
         }
     }
+
+    gradle.buildFinished {
+        if (failure != null) return@buildFinished
+        if (localTaskSuccess) {
+            printLocalSuccess(localPath, artifactPath, groupId, artifactId, versionName)
+        }
+        if (centralTaskSuccess) {
+            printCentralSuccess(groupId, artifactId, versionName)
+        }
+        if (customTaskSuccess) {
+            printCustomSuccess(customRepos, groupId, artifactId, versionName)
+        }
+    }
+}
+
+private fun printLocalSuccess(
+    localPath: String,
+    artifactPath: String,
+    groupId: String,
+    artifactId: String,
+    versionName: String,
+) {
+    println("")
+    println("=".repeat(80))
+    println("[Publish] SUCCESS: Published to Maven Local")
+    println("[Publish] Repository: $localPath")
+    println("[Publish] Artifact path: $artifactPath")
+    println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+    println("=".repeat(80))
+}
+
+private fun printCentralSuccess(groupId: String, artifactId: String, versionName: String) {
+    println("")
+    println("=".repeat(80))
+    println("[Publish] SUCCESS: Published to Maven Central")
+    println("[Publish] URL: https://central.sonatype.com")
+    println("[Publish] Search: https://central.sonatype.com/search?q=$groupId:$artifactId")
+    println("[Publish] Artifact: https://central.sonatype.com/artifact/$groupId/$artifactId/$versionName")
+    println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+    println("=".repeat(80))
+}
+
+private fun printCustomSuccess(
+    customRepos: List<CustomMavenRepo>,
+    groupId: String,
+    artifactId: String,
+    versionName: String,
+) {
+    println("")
+    println("=".repeat(80))
+    println("[Publish] SUCCESS: Published to Maven Custom repositories")
+    customRepos.forEach { repo ->
+        println("[Publish] Repository ${repo.index}: ${repo.url}")
+    }
+    println("[Publish] Coordinates: $groupId:$artifactId:$versionName")
+    println("=".repeat(80))
 }
 
 private fun Project.configurePublication(
