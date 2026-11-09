@@ -168,6 +168,74 @@ internal fun Project.configureKmpAndroidLibrary() {
     }
 }
 
+/** Returns the ccgo platform directory name for a Kotlin/Native target. */
+private fun nativePlatformName(targetName: String): String = when {
+    targetName.contains("ios") -> "ios"
+    targetName.contains("macos") -> "macos"
+    targetName.contains("linux") -> "linux"
+    else -> "unknown"
+}
+
+private fun nativeArchName(targetName: String): String = when (targetName) {
+    "ios_arm64" -> "arm64"
+    "ios_simulator_arm64" -> "arm64"
+    "ios_x64" -> "x86_64"
+    "macos_arm64" -> "arm64"
+    "macos_x64" -> "x86_64"
+    "linux_arm64" -> "arm64"
+    "linux_x64" -> "x86_64"
+    else -> "arm64"
+}
+
+private fun nativeDeviceType(targetName: String): String = when {
+    targetName.contains("simulator") -> "simulator"
+    targetName == "ios_x64" -> "simulator"
+    targetName == "ios_arm64" -> "device"
+    else -> ""
+}
+
+/**
+ * ccgo 3.x writes to ccgo_build/; keep cmake_build/ for older projects.
+ */
+private fun Project.nativeLibraryPath(
+    buildMode: String,
+    platformName: String,
+    deviceType: String,
+    archName: String
+): File {
+    val root = if (file("../ccgo_build").exists()) {
+        file("../ccgo_build")
+    } else {
+        file("../cmake_build")
+    }
+    val relative = if (deviceType.isNotEmpty()) {
+        "$buildMode/$platformName/static/$deviceType/$archName/out"
+    } else {
+        "$buildMode/$platformName/static/$archName/out"
+    }
+    return root.resolve(relative)
+}
+
+private fun nativeCompilerOpts(
+    project: Project,
+    projectNameLower: String,
+    isApple: Boolean
+): Array<String> {
+    val opts = mutableListOf(
+        "-I${project.file("../include/$projectNameLower/api/apple").absolutePath}",
+        "-I${project.file("../include/$projectNameLower/api/native").absolutePath}"
+    )
+    if (isApple) {
+        opts.addAll(
+            listOf(
+                "-D__FLT16_MANT_DIG__=0",
+                "-D__STDC_WANT_IEC_60559_TYPES_EXT__=0"
+            )
+        )
+    }
+    return opts.toTypedArray()
+}
+
 /**
  * Configures cinterop for all Kotlin/Native targets.
  *
@@ -183,87 +251,44 @@ internal fun Project.configureKmpCinterop() {
             compilations.getByName("main") {
                 cinterops {
                     create(projectNameCapitalized) {
-                        // Definition file path
-                        defFile(project.file("src/nativeInterop/cinterop/${projectNameCapitalized}.def"))
-
-                        // Package name for generated Kotlin code
-                        packageName(projectNameLower)
-
-                        // Include directories for header files
-                        includeDirs.allHeaders(
-                            project.file("../include/${projectNameLower}/api/apple"),
-                            project.file("../include/${projectNameLower}/api/native")
-                        )
-
-                        // Compiler options - add include paths
-                        val opts = mutableListOf(
-                            "-I${project.file("../include/${projectNameLower}/api/apple").absolutePath}",
-                            "-I${project.file("../include/${projectNameLower}/api/native").absolutePath}"
-                        )
-
-                        // Disable _Float16 and other unsupported features for Apple targets
-                        if (this@withType.konanTarget.family.isAppleFamily) {
-                            opts.addAll(listOf(
-                                // Disable _Float16 type (not supported by cinterop)
-                                "-D__FLT16_MANT_DIG__=0",
-                                "-D__STDC_WANT_IEC_60559_TYPES_EXT__=0"
-                            ))
-                        }
-
-                        compilerOpts(*opts.toTypedArray())
-
-                        // Configure static library to link
-                        // This explicitly specifies the merged library name to avoid
-                        // cinterop auto-discovering module libraries that no longer exist
-                        // after the merge step in ccgo build
-                        // The library path is determined based on the target platform
                         val target = this@withType
-                        val platformName = when {
-                            target.konanTarget.name.contains("ios") && !target.konanTarget.name.contains("simulator") -> "ios"
-                            target.konanTarget.name.contains("ios") && target.konanTarget.name.contains("simulator") -> "ios"
-                            target.konanTarget.name.contains("macos") -> "macos"
-                            target.konanTarget.name.contains("linux") -> "linux"
-                            else -> "unknown"
-                        }
-
-                        // Determine build mode (debug/release) and architecture
-                        // Uses ProjectConfig.isRelease which checks:
-                        // 1. Gradle property: -PisRelease=true
-                        // 2. Environment variable: CCGO_CI_BUILD_IS_RELEASE=true
-                        // 3. Default: false (debug build)
-                        val projectConfig = ProjectConfig.getDefault(project)
-                        val buildMode = if (projectConfig.isRelease) "release" else "debug"
-                        val archName = when (target.konanTarget.name) {
-                            "ios_arm64" -> "arm64"
-                            "ios_simulator_arm64" -> "arm64"
-                            "ios_x64" -> "x86_64"
-                            "macos_arm64" -> "arm64"
-                            "macos_x64" -> "x86_64"
-                            "linux_arm64" -> "arm64"
-                            "linux_x64" -> "x86_64"
-                            else -> "arm64"
-                        }
-
-                        // Determine device/simulator for iOS only
-                        // Note: ios_x64 is for simulator (x86_64), not device
-                        // macOS and Linux don't have device/simulator distinction
-                        val deviceType = when {
-                            target.konanTarget.name.contains("simulator") -> "simulator"
-                            target.konanTarget.name == "ios_x64" -> "simulator"  // ios_x64 is simulator
-                            target.konanTarget.name == "ios_arm64" -> "device"   // ios_arm64 is device
-                            else -> ""  // macOS, Linux don't have device/simulator
-                        }
-
-                        // Construct library path: cmake_build/{mode}/{platform}/static/{device}/{arch}/out
-                        val libPath = if (deviceType.isNotEmpty()) {
-                            project.file("../cmake_build/$buildMode/$platformName/static/$deviceType/$archName/out")
+                        val targetName = target.konanTarget.name
+                        val buildMode = if (ProjectConfig.getDefault(project).isRelease) {
+                            "release"
                         } else {
-                            project.file("../cmake_build/$buildMode/$platformName/static/$archName/out")
+                            "debug"
                         }
+                        val libPath = project.nativeLibraryPath(
+                            buildMode,
+                            nativePlatformName(targetName),
+                            nativeDeviceType(targetName),
+                            nativeArchName(targetName)
+                        )
 
+                        defFile(
+                            project.file(
+                                "src/nativeInterop/cinterop/$projectNameCapitalized.def"
+                            )
+                        )
+                        packageName(projectNameLower)
+                        includeDirs.allHeaders(
+                            project.file("../include/$projectNameLower/api/apple"),
+                            project.file("../include/$projectNameLower/api/native")
+                        )
+                        compilerOpts(
+                            *nativeCompilerOpts(
+                                project,
+                                projectNameLower,
+                                target.konanTarget.family.isAppleFamily
+                            )
+                        )
+
+                        // Configure static library to link. This explicitly specifies
+                        // the merged library name to avoid cinterop auto-discovering
+                        // module libraries that no longer exist after ccgo's merge.
                         if (libPath.exists()) {
                             extraOpts("-libraryPath", libPath.absolutePath)
-                            extraOpts("-staticLibrary", "lib${projectNameLower}.a")
+                            extraOpts("-staticLibrary", "lib$projectNameLower.a")
                         }
                     }
                 }
