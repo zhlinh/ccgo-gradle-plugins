@@ -78,6 +78,19 @@ internal fun Project.configureKmpLibrary() {
             }
         }
 
+        listOf("windows", "linux", "macos").forEach { platform ->
+            project.kmpNativeSdk(platform)?.let { sdk ->
+                project.tasks.withType<Jar>().configureEach {
+                    if (name == "desktopJar") {
+                        from(sdk.resolve("lib/$platform/shared")) {
+                            include("**/*.dll", "**/*.so", "**/*.so.*", "**/*.dylib")
+                            into("native/$platform")
+                        }
+                    }
+                }
+            }
+        }
+
         // CocoaPods configuration for iOS - accessed via extension
         extensions.findByType<CocoapodsExtension>()?.apply {
             summary = "${ccgoConfig.projectName.replaceFirstChar { it.uppercase() }} Kotlin Multiplatform Library"
@@ -165,6 +178,11 @@ internal fun Project.configureKmpAndroidLibrary() {
             sourceCompatibility = org.gradle.api.JavaVersion.VERSION_17
             targetCompatibility = org.gradle.api.JavaVersion.VERSION_17
         }
+        project.kmpNativeSdk("android")?.let { sdk ->
+            val shared = sdk.resolve("lib/android/shared")
+            require(shared.isDirectory) { "Android SDK must contain shared JNI libraries: $shared" }
+            sourceSets.getByName("main").jniLibs.setSrcDirs(listOf(shared))
+        }
     }
 }
 
@@ -217,13 +235,14 @@ private fun Project.nativeLibraryPath(
 }
 
 private fun nativeCompilerOpts(
-    project: Project,
+    headers: File,
     projectNameLower: String,
     isApple: Boolean
 ): Array<String> {
     val opts = mutableListOf(
-        "-I${project.file("../include/$projectNameLower/api/apple").absolutePath}",
-        "-I${project.file("../include/$projectNameLower/api/native").absolutePath}"
+        "-I${headers.absolutePath}",
+        "-I${headers.resolve("$projectNameLower/api/apple").absolutePath}",
+        "-I${headers.resolve("$projectNameLower/api/native").absolutePath}"
     )
     if (isApple) {
         opts.addAll(
@@ -264,6 +283,8 @@ internal fun Project.configureKmpCinterop() {
                             nativeDeviceType(targetName),
                             nativeArchName(targetName)
                         )
+                        val sdk = project.kmpNativeSdk(nativePlatformName(targetName))
+                        val headers = sdk?.resolve("include") ?: project.file("../include")
 
                         defFile(
                             project.file(
@@ -272,12 +293,13 @@ internal fun Project.configureKmpCinterop() {
                         )
                         packageName(projectNameLower)
                         includeDirs.allHeaders(
-                            project.file("../include/$projectNameLower/api/apple"),
-                            project.file("../include/$projectNameLower/api/native")
+                            headers,
+                            headers.resolve("$projectNameLower/api/apple"),
+                            headers.resolve("$projectNameLower/api/native")
                         )
                         compilerOpts(
                             *nativeCompilerOpts(
-                                project,
+                                headers,
                                 projectNameLower,
                                 target.konanTarget.family.isAppleFamily
                             )
@@ -286,7 +308,14 @@ internal fun Project.configureKmpCinterop() {
                         // Configure static library to link. This explicitly specifies
                         // the merged library name to avoid cinterop auto-discovering
                         // module libraries that no longer exist after ccgo's merge.
-                        if (libPath.exists()) {
+                        if (sdk != null) {
+                            val library = nativeSdkStaticLibrary(
+                                sdk, nativePlatformName(targetName), nativeArchName(targetName),
+                                nativeDeviceType(targetName), projectNameLower
+                            )
+                            extraOpts("-libraryPath", library.parentFile.absolutePath)
+                            extraOpts("-staticLibrary", library.name)
+                        } else if (libPath.exists()) {
                             extraOpts("-libraryPath", libPath.absolutePath)
                             extraOpts("-staticLibrary", "lib$projectNameLower.a")
                         }

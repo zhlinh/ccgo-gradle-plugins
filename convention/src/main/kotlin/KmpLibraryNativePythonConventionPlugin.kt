@@ -57,6 +57,11 @@ class KmpLibraryNativePythonConventionPlugin : Plugin<Project> {
 
                 // Configure publishing metadata
                 configureKmpPublishingMetadata()
+
+                // Acknowledge SDK wiring so ccgo rejects older plugins that ignore its inputs.
+                (findProperty("ccgoNativeSdkReceipt") as String?)?.let { path ->
+                    file(path).writeText("ccgo-native-sdk-v1\n")
+                }
             }
         }
     }
