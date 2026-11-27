@@ -99,6 +99,23 @@ MAVEN_REPO_PASSWORD=your-password
 
 ## Usage in CCGO Projects
 
+### Skip KMP Publication Signing
+
+For private or local repositories that do not require signatures, disable signing
+in the consuming KMP project:
+
+```bash
+./gradlew ccgoPublishToMavenCustom -PccgoMavenSkipSign=true
+./gradlew ccgoPublishToMavenLocal -PccgoMavenSkipSign=true
+```
+
+You can also set `ccgoMavenSkipSign=true` in `gradle.properties`, or
+`CCGO_MAVEN_SKIP_SIGN=true` in CI. The environment variable takes precedence over the
+Gradle property. This skips signing configuration entirely, including reading
+signing credentials, probing GPG, and registering publication signing tasks.
+Without the flag, existing signing behavior is preserved. Do not enable it for
+Maven Central releases, which require signatures.
+
 ### 1. Configure Plugin Repository
 
 In your project's `settings.gradle.kts`:

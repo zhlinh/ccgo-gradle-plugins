@@ -43,7 +43,9 @@ publishing {
         }
     }
 }
-tasks.withType(Sign).configureEach { enabled = false }
+tasks.register('verifySigningSkipped') {
+    doLast { assert tasks.withType(Sign).isEmpty() }
+}
 """)
         artifacts = []
         for target, extension in [("android", "aar"), ("desktop", "jar"), ("iosarm64", "klib")]:
@@ -56,16 +58,24 @@ tasks.withType(Sign).configureEach { enabled = false }
         environment.update({
             "MAVEN_LOCAL_PATH": str(root / "local"),
             "CCGO_MAVEN_URL": (root / "custom").as_uri(),
-            "SIGNING_IN_MEMORY_KEY": "",
-            "SIGNING_IN_MEMORY_KEY_PASSWORD": "",
+            "CCGO_MAVEN_USERNAME": ",",
+            "CCGO_MAVEN_PASSWORD": ",",
+            "SIGNING_IN_MEMORY_KEY": "invalid-key-must-not-be-read",
+            "SIGNING_IN_MEMORY_KEY_PASSWORD": "unused",
+            "CCGO_MAVEN_SKIP_SIGN": "true",
         })
         command = [str(plugin_root / "gradlew"), "--no-daemon", "--no-configuration-cache"]
         if "--offline" in sys.argv[1:]:
             command.append("--offline")
         command += ["-p", str(project), "-PccgoKmpSdkManifest=" + str(manifest),
+                    "-PccgoMavenSkipSign=false", "verifySigningSkipped",
                     "ccgoPublishToMavenLocal", "ccgoPublishToMavenCustom",
                     "publishAllPublicationsToNmcpRepository"]
         subprocess.run(command, cwd=plugin_root, env=environment, check=True)
+        environment.pop("CCGO_MAVEN_SKIP_SIGN")
+        property_command = command[:command.index("-PccgoMavenSkipSign=false")]
+        property_command += ["-PccgoMavenSkipSign=true", "verifySigningSkipped"]
+        subprocess.run(property_command, cwd=plugin_root, env=environment, check=True)
         for repository in [root / "local", root / "custom", project / "build/nmcp/m2"]:
             for artifact in artifacts:
                 name = "sample-kmp-" + artifact["target"]

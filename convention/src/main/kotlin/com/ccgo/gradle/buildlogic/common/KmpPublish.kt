@@ -48,6 +48,7 @@ private const val REPO_NAME_CUSTOM = "MavenCustom"
  * - MAVEN_CENTRAL_PASSWORD / mavenCentralPassword
  * - SIGNING_IN_MEMORY_KEY / signingInMemoryKey
  * - SIGNING_IN_MEMORY_KEY_PASSWORD / signingInMemoryKeyPassword
+ * - CCGO_MAVEN_SKIP_SIGN / ccgoMavenSkipSign (true skips all KMP signing setup)
  * - MAVEN_LOCAL_PATH / mavenLocalPath
  * - CCGO_MAVEN_URL / mavenCustomUrls (comma-separated)
  * - CCGO_MAVEN_USERNAME / mavenCustomUsernames (comma-separated)
@@ -248,13 +249,22 @@ private fun prepareKmpPgpKey(key: String): String? {
  * Configures signing for KMP publications.
  */
 private fun Project.configureKmpSign() {
+    val skipSign = providers.environmentVariable("CCGO_MAVEN_SKIP_SIGN")
+        .orElse(providers.gradleProperty("ccgoMavenSkipSign"))
+        .map { it.trim().equals("true", ignoreCase = true) }
+        .getOrElse(false)
+    if (skipSign) {
+        println("[KMP-Signing] Signing disabled by ccgoMavenSkipSign / CCGO_MAVEN_SKIP_SIGN")
+        return
+    }
+
     // Check for in-memory signing keys
     val rawSigningKey = ConfigProvider.get(project, ConfigKey.SIGNING_KEY)
     val signingPassword = ConfigProvider.get(project, ConfigKey.SIGNING_KEY_PASSWORD)
     val hasSigningKeys = rawSigningKey.isNotEmpty() && signingPassword.isNotEmpty()
 
     // A machine publishing locally may not have gpg installed at all.
-    val hasGpgAgent = hasGpgAgent()
+    val hasGpgAgent = !hasSigningKeys && hasGpgAgent()
 
     extensions.configure<SigningExtension> {
         isRequired = false
